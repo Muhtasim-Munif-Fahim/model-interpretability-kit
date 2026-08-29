@@ -8,6 +8,7 @@ from interpretability.partial_dependence import (
     ice_curves,
     make_grid,
     partial_dependence,
+    partial_dependence_2d,
 )
 
 
@@ -90,6 +91,41 @@ def test_pdp_averages_over_all_rows():
     result = partial_dependence(_linear_predict, X, feature_index=0, grid_points=3)
     expected_mean = (2.0 * result["grid"] + X[:, 1].mean())
     assert np.allclose(result["values"], expected_mean, atol=1e-8)
+
+
+def test_pdp_2d_surface_shape():
+    X, y, _ = make_synthetic_data(n_samples=120, seed=7)
+    model = fit_decision_tree(X, y, max_depth=4, min_samples_leaf=3)
+    result = partial_dependence_2d(model.predict, X, (0, 1), grid_points=8)
+    assert result["values"].shape == (8, 8)
+    assert result["feature0"] == 0
+    assert result["feature1"] == 1
+    assert result["grid0"].shape == (8,)
+    assert result["grid1"].shape == (8,)
+
+
+def test_pdp_2d_surface_values_match_manual_computation():
+    X = np.random.default_rng(8).uniform(size=(50, 2))
+    result = partial_dependence_2d(_linear_predict, X, (0, 1), grid_points=5)
+    for i in range(5):
+        for j in range(5):
+            expected = 2.0 * result["grid0"][i] + 1.0 * result["grid1"][j]
+            assert result["values"][i, j] == pytest.approx(expected)
+
+
+def test_pdp_2d_separable_for_additive_model():
+    X = np.random.default_rng(9).uniform(size=(40, 2))
+    result = partial_dependence_2d(_linear_predict, X, (0, 1), grid_points=6)
+    row_diff = np.diff(result["values"], axis=1)
+    assert np.allclose(row_diff, row_diff[0], atol=1e-8)
+
+
+def test_pdp_2d_rejects_same_or_invalid_features():
+    X = np.random.default_rng(10).uniform(size=(30, 2))
+    with pytest.raises(ValueError):
+        partial_dependence_2d(_linear_predict, X, (0, 0))
+    with pytest.raises(ValueError):
+        partial_dependence_2d(_linear_predict, X, (0, 2))
 
 
 def test_ice_curves_shape_and_rows():

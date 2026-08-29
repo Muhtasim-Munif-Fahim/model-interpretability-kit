@@ -10,7 +10,7 @@ import numpy as np
 
 from ._utils import as_2d, check_feature_index, check_rows
 
-__all__ = ["make_grid", "partial_dependence", "ice_curves"]
+__all__ = ["make_grid", "partial_dependence", "partial_dependence_2d", "ice_curves"]
 
 
 def make_grid(X_column, grid_points=20, grid=None):
@@ -67,6 +67,58 @@ def partial_dependence(predict, X, feature_index, grid=None, grid_points=20):
         X_work[:, f] = v
         values[i] = float(np.mean(predict(X_work)))
     return {"feature": f, "grid": grid, "values": values}
+
+
+def partial_dependence_2d(predict, X, feature_indices, grids=None, grid_points=10):
+    """Average model prediction as two features vary over a joint grid.
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y_pred`` for a 2-D ``X``.
+    X : ndarray
+        Feature matrix.
+    feature_indices : sequence of int
+        Exactly two columns ``(f0, f1)``.
+    grids : tuple of ndarray or None
+        Explicit grids for each feature; defaults to percentile grids.
+    grid_points : int
+        Number of default grid points per feature.
+
+    Returns
+    -------
+    dict
+        ``{"feature0": int, "feature1": int, "grid0": ndarray,
+        "grid1": ndarray, "values": ndarray of shape (len(grid0),
+        len(grid1))}`` where ``values[i, j]`` is the mean prediction with
+        feature0 = ``grid0[i]`` and feature1 = ``grid1[j]``.
+    """
+    X = as_2d(X)
+    f0, f1 = feature_indices
+    f0 = check_feature_index(f0, X.shape[1])
+    f1 = check_feature_index(f1, X.shape[1])
+    if f0 == f1:
+        raise ValueError("the two feature indices must differ")
+    if grids is None:
+        grid0 = make_grid(X[:, f0], grid_points)
+        grid1 = make_grid(X[:, f1], grid_points)
+    else:
+        grid0 = make_grid(X[:, f0], grid_points, grids[0])
+        grid1 = make_grid(X[:, f1], grid_points, grids[1])
+    X_work = X.copy()
+    values = np.empty((grid0.size, grid1.size))
+    for i, v0 in enumerate(grid0):
+        X_work[:, f0] = v0
+        for j, v1 in enumerate(grid1):
+            X_work[:, f1] = v1
+            values[i, j] = float(np.mean(predict(X_work)))
+    return {
+        "feature0": f0,
+        "feature1": f1,
+        "grid0": grid0,
+        "grid1": grid1,
+        "values": values,
+    }
 
 
 def ice_curves(predict, X, feature_index, grid=None, grid_points=20, rows=None, max_rows=25):
