@@ -7,6 +7,8 @@ model's score degrades when a feature is perturbed or removed.
 
 import numpy as np
 
+from ._utils import as_1d, as_2d
+
 __all__ = ["r2_score", "permutation_importance", "drop_column_importance"]
 
 
@@ -19,22 +21,6 @@ def r2_score(y_true, y_pred):
     if ss_tot == 0:
         return 1.0 if ss_res == 0 else 0.0
     return 1.0 - ss_res / ss_tot
-
-
-def _as_2d(X, name="X"):
-    X = np.asarray(X, dtype=float)
-    if X.ndim == 1:
-        return X[:, None]
-    if X.ndim != 2:
-        raise ValueError("%s must be a 1-D or 2-D array" % name)
-    return X
-
-
-def _as_1d(y, n, name="y"):
-    y = np.asarray(y, dtype=float).ravel()
-    if y.shape[0] != n:
-        raise ValueError("%s must have as many entries as %s has rows" % (name, "X"))
-    return y
 
 
 def _metric_or_default(metric):
@@ -76,8 +62,8 @@ def permutation_importance(predict, X, y, metric=None, n_repeats=5, seed=None):
         ``{"mean": ndarray (n_features,), "std": ndarray (n_features,),
         "baseline": float, "n_repeats": int}``.
     """
-    X = _as_2d(X)
-    y = _as_1d(y, X.shape[0])
+    X = as_2d(X)
+    y = as_1d(y, X.shape[0])
     if n_repeats < 1:
         raise ValueError("n_repeats must be at least 1")
     metric = _metric_or_default(metric)
@@ -125,8 +111,8 @@ def drop_column_importance(fit_predict, X, y, metric=None):
         ``{"importance": ndarray (n_features,), "baseline": float,
         "scores": ndarray (n_features,)}``.
     """
-    X = _as_2d(X)
-    y = _as_1d(y, X.shape[0])
+    X = as_2d(X)
+    y = as_1d(y, X.shape[0])
     if not callable(fit_predict):
         raise TypeError("fit_predict must be a callable fit_predict(X_fit, y_fit, X_eval)")
     metric = _metric_or_default(metric)
