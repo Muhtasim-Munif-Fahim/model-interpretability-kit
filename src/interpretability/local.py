@@ -97,8 +97,8 @@ def _weighted_r2(y, y_hat, weights):
     w_mean = np.sum(weights * y) / np.sum(weights)
     ss_res = np.sum(weights * (y - y_hat) ** 2)
     ss_tot = np.sum(weights * (y - w_mean) ** 2)
-    if ss_tot == 0:
-        return 1.0 if ss_res == 0 else 0.0
+    if ss_tot < 1e-12:
+        return 1.0 if ss_res < 1e-12 else 0.0
     return 1.0 - ss_res / ss_tot
 
 
