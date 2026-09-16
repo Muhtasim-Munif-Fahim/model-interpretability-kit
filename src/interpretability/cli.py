@@ -1,9 +1,9 @@
 """Command-line interface for the interpretability toolkit.
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
-expose a single explanation type each: ``importance``, ``pdp``, ``explain``
-and ``report``. All randomness is seeded through ``--seed`` so runs are
-reproducible.
+expose a single explanation type each: ``importance``, ``pdp``, ``ale``,
+``explain`` and ``report``. All randomness is seeded through ``--seed`` so
+runs are reproducible.
 """
 
 import argparse
@@ -11,6 +11,7 @@ import sys
 
 import numpy as np
 
+from .ale import accumulated_local_effects
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import permutation_importance
@@ -37,6 +38,10 @@ def build_parser():
     p_pdp = sub.add_parser("pdp", help="partial dependence curves")
     p_pdp.add_argument("--features", default="0,1", help="one or two feature indices")
     p_pdp.add_argument("--grid-points", type=int, default=15)
+
+    p_ale = sub.add_parser("ale", help="1-D accumulated local effects curves")
+    p_ale.add_argument("--features", default="0,1", help="comma-separated feature indices")
+    p_ale.add_argument("--grid-points", type=int, default=15)
 
     p_explain = sub.add_parser("explain", help="local LIME-style explanations")
     p_explain.add_argument("--rows", default="0,1", help="comma-separated row indices")
@@ -110,6 +115,22 @@ def _cmd_pdp(args):
         )
     else:
         sys.exit("--features expects one or two indices")
+    return 0
+
+
+def _cmd_ale(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    features = _parse_indices(args.features, "features")
+    if not features:
+        sys.exit("--features expects one or more indices")
+    for f in features:
+        result = accumulated_local_effects(
+            model.predict, X, f, grid_points=args.grid_points
+        )
+        print("Accumulated local effects for %s:" % names[f])
+        for grid_value, value in zip(result["grid"], result["values"]):
+            print("  %.4f -> %.4f" % (grid_value, value))
     return 0
 
 
@@ -191,6 +212,8 @@ def main(argv=None):
         return _cmd_importance(args)
     if args.command == "pdp":
         return _cmd_pdp(args)
+    if args.command == "ale":
+        return _cmd_ale(args)
     if args.command == "explain":
         return _cmd_explain(args)
     if args.command == "report":

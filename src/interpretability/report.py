@@ -11,8 +11,9 @@ DEFAULT_CAVEATS = [
     "noisy, so repeated shuffles and a seeded run are recommended.",
     "Partial dependence averages the model over all rows at each grid value, "
     "which implicitly assumes the varied feature is independent of the "
-    "others; in low-density regions of the data the average extrapolates "
-    "outside the training distribution.",
+    "others; accumulated local effects instead average finite differences "
+    "inside quantile bins, avoiding that independence assumption, and the "
+    "centered ALE curve is not a raw predicted value.",
     "LIME-style local explanations are linear approximations around a single "
     "instance: their weights are only meaningful within the neighborhood "
     "defined by the sampling width and kernel, and different widths can "

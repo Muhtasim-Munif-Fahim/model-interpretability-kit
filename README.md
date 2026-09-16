@@ -14,6 +14,7 @@ truth is known, so every explanation can be checked against reality.
 | Permutation importance | Drop in model score when a feature's column is shuffled | mean ± std importance per feature | Fisher, Rudin & Dominici, "All Models are Wrong, but Many Are Useful" (JMLR, 2019); Breiman, "Random Forests" (2001) |
 | Drop-column importance | Drop in score when a feature is removed and the model is refit | importance per feature | Same class of variable-importance measures |
 | Partial dependence (1-D / 2-D) | Average prediction as one or two features vary over a grid | curve / surface arrays | Friedman, "Greedy Function Approximation" (Annals of Statistics, 2001) |
+| Accumulated local effects (1-D) | Accumulated local prediction change as a feature moves across quantile bins, centered to mean zero | curve arrays | Apley & Zhu, "Visualizing the Effects of Predictor Variables in Black Box Supervised Learning Models" (JASA, 2020) |
 | ICE curves | Per-row predictions as one feature varies | curve per row | Goldstein et al., "Peeking Inside the Black Box" (JCGS, 2015) |
 | LIME-style surrogate | Locally weighted linear fit around an instance | feature weights + intercept + local R2 | Ribeiro, Singh & Guestrin, "Why Should I Trust You?" (KDD, 2016) |
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
@@ -43,6 +44,7 @@ python -m pytest tests -q
 
 ```python
 import numpy as np
+from interpretability.ale import accumulated_local_effects
 from interpretability.demo_model import fit_decision_tree, make_synthetic_data
 from interpretability.importance import permutation_importance
 from interpretability.local import lime_explain
@@ -59,6 +61,10 @@ print(imp["mean"], imp["std"])
 pdp = partial_dependence(model.predict, X[200:], 0, grid_points=20)
 print(pdp["grid"], pdp["values"])
 
+# Global: same question without the PDP independence assumption
+ale = accumulated_local_effects(model.predict, X[200:], 0, grid_points=20)
+print(ale["grid"], ale["values"])
+
 # Local: why did row 0 get its prediction?
 exp = lime_explain(model.predict, X[200], X[200:], n_samples=400, seed=42, feature_names=names)
 print(exp["coefficients"], exp["intercept"], exp["weighted_r2"])
@@ -69,6 +75,7 @@ print(exp["coefficients"], exp["intercept"], exp["weighted_r2"])
 ```bash
 python -m interpretability.cli --seed 42 importance --n-repeats 10
 python -m interpretability.cli --seed 42 pdp --features 0,2
+python -m interpretability.cli --seed 42 ale --features 0,2
 python -m interpretability.cli --seed 42 explain --rows 0,1
 python -m interpretability.cli --seed 42 report --out examples/output/demo_report.md
 ```
@@ -113,6 +120,12 @@ to support exact tree SHAP attribution.
   of the others. In low-density regions of the data the average extrapolates
   outside the training distribution, and ICE curves help reveal whether the
   averaged curve hides heterogeneous behavior.
+- **ALE vs partial dependence.** ALE estimates a feature's effect from finite
+  differences inside quantile bins, so it does not require independence from
+  the other features. The curve is centered to have mean zero over the data
+  and should not be read as the raw predicted value at a grid point (unlike
+  PDP). Coarse bins can miss sharp jumps; empty bins contribute no local
+  effect.
 - **LIME sampling sensitivity.** Local surrogate weights depend on the
   neighborhood width, the kernel bandwidth, and the number of samples. The
   weights are only meaningful locally, and the surrogate's own R2 (reported
