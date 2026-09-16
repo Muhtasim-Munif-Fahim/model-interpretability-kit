@@ -1,8 +1,8 @@
 """End-to-end demo of the interpretability toolkit.
 
 Builds the synthetic regression problem, fits the transparent decision tree,
-then computes permutation importance, 1-D partial dependence for three
-features, ICE curves for a few rows, LIME-style local explanations (plus
+then computes permutation importance, 1-D partial dependence and ALE for
+three features, ICE curves for a few rows, LIME-style local explanations (plus
 exact interventional tree SHAP values) for two evaluation rows, a
 faithfulness summary, and writes ``output/demo_report.md``.
 
@@ -18,6 +18,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
+from interpretability.ale import accumulated_local_effects
 from interpretability.demo_model import fit_decision_tree, make_synthetic_data
 from interpretability.evaluate import top_feature_overlap
 from interpretability.importance import permutation_importance
@@ -65,6 +66,20 @@ def main():
                 pdp["grid"][-1],
                 pdp["values"][0],
                 pdp["values"][-1],
+            )
+        )
+
+    print("=== Accumulated local effects ===")
+    for f in (0, 1, 2):
+        ale = accumulated_local_effects(model.predict, X_eval, f, grid_points=15)
+        print(
+            "  %s: grid [%.3f, %.3f] -> centered effects [%.3f, %.3f]"
+            % (
+                feature_names[f],
+                ale["grid"][0],
+                ale["grid"][-1],
+                ale["values"][0],
+                ale["values"][-1],
             )
         )
 
