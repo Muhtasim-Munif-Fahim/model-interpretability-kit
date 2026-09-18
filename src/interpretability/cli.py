@@ -11,7 +11,7 @@ import sys
 
 import numpy as np
 
-from .ale import accumulated_local_effects
+from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import permutation_importance
@@ -39,8 +39,8 @@ def build_parser():
     p_pdp.add_argument("--features", default="0,1", help="one or two feature indices")
     p_pdp.add_argument("--grid-points", type=int, default=15)
 
-    p_ale = sub.add_parser("ale", help="1-D accumulated local effects curves")
-    p_ale.add_argument("--features", default="0,1", help="comma-separated feature indices")
+    p_ale = sub.add_parser("ale", help="1-D or 2-D accumulated local effects")
+    p_ale.add_argument("--features", default="0,1", help="one or two feature indices")
     p_ale.add_argument("--grid-points", type=int, default=15)
 
     p_explain = sub.add_parser("explain", help="local LIME-style explanations")
@@ -122,15 +122,31 @@ def _cmd_ale(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
     features = _parse_indices(args.features, "features")
-    if not features:
-        sys.exit("--features expects one or more indices")
-    for f in features:
+    if len(features) == 1:
+        f = features[0]
         result = accumulated_local_effects(
             model.predict, X, f, grid_points=args.grid_points
         )
         print("Accumulated local effects for %s:" % names[f])
         for grid_value, value in zip(result["grid"], result["values"]):
             print("  %.4f -> %.4f" % (grid_value, value))
+    elif len(features) == 2:
+        surface = accumulated_local_effects_2d(
+            model.predict, X, tuple(features), grid_points=args.grid_points
+        )
+        print(
+            "2-D accumulated local effects %s x %s: %dx%d surface, min %.4f, max %.4f"
+            % (
+                names[surface["feature0"]],
+                names[surface["feature1"]],
+                surface["values"].shape[0],
+                surface["values"].shape[1],
+                surface["values"].min(),
+                surface["values"].max(),
+            )
+        )
+    else:
+        sys.exit("--features expects one or two indices")
     return 0
 
 

@@ -2,9 +2,10 @@
 
 Builds the synthetic regression problem, fits the transparent decision tree,
 then computes permutation importance, 1-D partial dependence and ALE for
-three features, ICE curves for a few rows, LIME-style local explanations (plus
-exact interventional tree SHAP values) for two evaluation rows, a
-faithfulness summary, and writes ``output/demo_report.md``.
+three features, a 2-D ALE interaction surface, ICE curves for a few rows,
+LIME-style local explanations (plus exact interventional tree SHAP values)
+for two evaluation rows, a faithfulness summary, and writes
+``output/demo_report.md``.
 
 Run from the repository root::
 
@@ -18,7 +19,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-from interpretability.ale import accumulated_local_effects
+from interpretability.ale import accumulated_local_effects, accumulated_local_effects_2d
 from interpretability.demo_model import fit_decision_tree, make_synthetic_data
 from interpretability.evaluate import top_feature_overlap
 from interpretability.importance import permutation_importance
@@ -82,6 +83,18 @@ def main():
                 ale["values"][-1],
             )
         )
+    ale2 = accumulated_local_effects_2d(model.predict, X_eval, (0, 1), grid_points=10)
+    print(
+        "  2-D interaction %s x %s: %dx%d surface, min %.3f, max %.3f"
+        % (
+            feature_names[ale2["feature0"]],
+            feature_names[ale2["feature1"]],
+            ale2["values"].shape[0],
+            ale2["values"].shape[1],
+            ale2["values"].min(),
+            ale2["values"].max(),
+        )
+    )
 
     ice = ice_curves(model.predict, X_eval, 0, grid_points=15, rows=[0, 1, 2, 3, 4])
     print(
