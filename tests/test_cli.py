@@ -43,12 +43,19 @@ def test_pdp_subcommand_two_features_surface(capsys):
 
 
 def test_ale_subcommand_prints_curves(capsys):
-    code = main(["--seed", "3", "--n-samples", "100", "ale", "--features", "0,2", "--grid-points", "8"])
+    code = main(["--seed", "3", "--n-samples", "100", "ale", "--features", "0", "--grid-points", "8"])
     out = capsys.readouterr().out
     assert code == 0
     assert "Accumulated local effects for X0" in out
-    assert "Accumulated local effects for X2" in out
     assert "->" in out
+
+
+def test_ale_subcommand_two_features_surface(capsys):
+    code = main(["--seed", "3", "--n-samples", "100", "ale", "--features", "0,2", "--grid-points", "5"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2-D accumulated local effects X0 x X2" in out
+    assert "5x5 surface" in out
 
 
 def test_explain_subcommand(capsys):

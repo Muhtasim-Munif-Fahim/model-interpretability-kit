@@ -1,10 +1,17 @@
-"""Tests for 1-D accumulated local effects curves."""
+"""Tests for 1-D accumulated local effects curves and 2-D interaction surfaces."""
 
 import numpy as np
 import pytest
 
 from interpretability import accumulated_local_effects as ale_from_package
-from interpretability.ale import ale, accumulated_local_effects, make_ale_grid
+from interpretability import accumulated_local_effects_2d as ale_2d_from_package
+from interpretability.ale import (
+    ale,
+    ale_2d,
+    accumulated_local_effects,
+    accumulated_local_effects_2d,
+    make_ale_grid,
+)
 from interpretability.demo_model import fit_decision_tree, make_synthetic_data
 from interpretability.partial_dependence import partial_dependence
 
@@ -16,6 +23,8 @@ def _linear_predict(Z, coefs=(2.0, 1.0)):
 def test_ale_exported_from_public_api():
     assert ale_from_package is accumulated_local_effects
     assert ale is accumulated_local_effects
+    assert ale_2d_from_package is accumulated_local_effects_2d
+    assert ale_2d is accumulated_local_effects_2d
 
 
 def test_make_ale_grid_default_is_quantile_edges():
@@ -171,3 +180,158 @@ def test_ale_on_synthetic_linear_predict_ranks_features():
     assert spans[0] == pytest.approx(4.0 * (X[:, 0].max() - X[:, 0].min()), abs=1e-6)
     assert spans[4] == pytest.approx(0.0, abs=1e-10)
     assert spans[0] > spans[1] > spans[3] > spans[4]
+
+
+def _corner_weighted_mean(values, counts):
+    corners = (
+        values[:-1, :-1] + values[:-1, 1:] + values[1:, :-1] + values[1:, 1:]
+    ) / 4.0
+    total = float(counts.sum())
+    return float((counts * corners).sum() / total)
+
+
+def test_ale_2d_surface_shape_and_counts():
+    X = np.random.default_rng(20).uniform(size=(80, 3))
+    result = accumulated_local_effects_2d(
+        lambda Z: _linear_predict(Z, (2.0, 1.0, 0.0)), X, (0, 1), grid_points=8
+    )
+    assert result["feature0"] == 0
+    assert result["feature1"] == 1
+    assert result["grid0"].shape == (8,)
+    assert result["grid1"].shape == (8,)
+    assert result["values"].shape == (8, 8)
+    assert result["counts"].shape == (7, 7)
+    assert int(result["counts"].sum()) == X.shape[0]
+
+
+def test_ale_2d_zero_for_additive_model():
+    X = np.random.default_rng(21).uniform(size=(100, 2))
+    result = accumulated_local_effects_2d(_linear_predict, X, (0, 1), grid_points=10)
+    assert np.allclose(result["values"], 0.0, atol=1e-10)
+
+
+def test_ale_2d_zero_when_one_feature_unused():
+    X = np.random.default_rng(22).uniform(size=(80, 3))
+    result = accumulated_local_effects_2d(
+        lambda Z: _linear_predict(Z, (2.0, 1.0, 0.0)), X, (0, 2), grid_points=8
+    )
+    assert np.allclose(result["values"], 0.0, atol=1e-10)
+
+
+def test_ale_2d_recovers_centered_multiplicative_interaction():
+    grid0 = np.linspace(0.0, 1.0, 9)
+    grid1 = np.linspace(0.0, 1.0, 8)
+    mid0 = 0.5 * (grid0[:-1] + grid0[1:])
+    mid1 = 0.5 * (grid1[:-1] + grid1[1:])
+    xx, yy = np.meshgrid(mid0, mid1, indexing="ij")
+    X = np.column_stack([xx.ravel(), yy.ravel()])
+
+    def product_predict(Z):
+        return Z[:, 0] * Z[:, 1]
+
+    result = accumulated_local_effects_2d(
+        product_predict, X, (0, 1), grids=(grid0, grid1)
+    )
+    assert np.array_equal(result["grid0"], grid0)
+    assert np.array_equal(result["grid1"], grid1)
+    assert np.all(result["counts"] == 1)
+    expected = np.outer(grid0 - X[:, 0].mean(), grid1 - X[:, 1].mean())
+    expected = expected - _corner_weighted_mean(expected, result["counts"])
+    assert np.allclose(result["values"], expected, atol=1e-10)
+
+
+def test_ale_2d_centered_over_cells():
+    X = np.random.default_rng(24).uniform(size=(90, 2))
+    result = accumulated_local_effects_2d(
+        lambda Z: Z[:, 0] * Z[:, 1], X, (0, 1), grid_points=7
+    )
+    assert _corner_weighted_mean(result["values"], result["counts"]) == pytest.approx(
+        0.0, abs=1e-10
+    )
+
+
+def test_ale_2d_custom_grids():
+    X = np.random.default_rng(25).uniform(size=(50, 2))
+    grids = (np.linspace(0.1, 0.9, 5), np.linspace(0.2, 0.8, 4))
+    result = accumulated_local_effects_2d(_linear_predict, X, (0, 1), grids=grids)
+    assert np.array_equal(result["grid0"], grids[0])
+    assert np.array_equal(result["grid1"], grids[1])
+    assert result["values"].shape == (5, 4)
+    assert result["counts"].shape == (4, 3)
+    assert np.allclose(result["values"], 0.0, atol=1e-10)
+
+
+def test_ale_2d_empty_cell_has_zero_local_effect():
+    X = np.random.default_rng(26).uniform(0.0, 0.2, size=(40, 2))
+    grids = (np.array([0.0, 0.2, 1.0]), np.array([0.0, 0.2, 1.0]))
+    result = accumulated_local_effects_2d(
+        lambda Z: Z[:, 0] * Z[:, 1], X, (0, 1), grids=grids
+    )
+    assert result["counts"][1, 1] == 0
+    assert result["counts"][0, 1] == 0
+    assert result["counts"][1, 0] == 0
+    assert int(result["counts"][0, 0]) == X.shape[0]
+    second = (
+        result["values"][1:, 1:]
+        - result["values"][:-1, 1:]
+        - result["values"][1:, :-1]
+        + result["values"][:-1, :-1]
+    )
+    assert second[1, 1] == pytest.approx(0.0, abs=1e-12)
+    assert second[0, 1] == pytest.approx(0.0, abs=1e-12)
+    assert second[1, 0] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_ale_2d_rejects_same_or_invalid_features():
+    X = np.random.default_rng(27).uniform(size=(30, 2))
+    with pytest.raises(ValueError):
+        accumulated_local_effects_2d(_linear_predict, X, (0, 0))
+    with pytest.raises(ValueError):
+        accumulated_local_effects_2d(_linear_predict, X, (0, 2))
+
+
+def test_ale_2d_empty_X_rejected():
+    with pytest.raises(ValueError):
+        accumulated_local_effects_2d(_linear_predict, np.empty((0, 2)), (0, 1))
+
+
+def test_ale_2d_constant_feature_flat_surface():
+    rng = np.random.default_rng(28)
+    X = np.column_stack([np.full(40, 0.4), rng.uniform(size=40)])
+    result = accumulated_local_effects_2d(_linear_predict, X, (0, 1), grid_points=5)
+    assert np.allclose(result["values"], 0.0, atol=1e-8)
+
+
+def test_ale_2d_interaction_larger_than_additive():
+    X = np.random.default_rng(29).uniform(size=(150, 3))
+    additive = accumulated_local_effects_2d(
+        lambda Z: 4.0 * Z[:, 0] + 3.0 * Z[:, 1], X, (0, 1), grid_points=8
+    )
+    interaction = accumulated_local_effects_2d(
+        lambda Z: 4.0 * Z[:, 0] * Z[:, 1], X, (0, 1), grid_points=8
+    )
+    assert float(np.max(np.abs(additive["values"]))) < 1e-10
+    assert float(np.ptp(interaction["values"])) > 0.2
+
+
+def test_ale_2d_on_demo_tree_additive_pair_is_small():
+    X, y, _ = make_synthetic_data(n_samples=250, seed=30)
+    model = fit_decision_tree(X, y, max_depth=6, min_samples_leaf=5)
+    surface = accumulated_local_effects_2d(model.predict, X, (0, 1), grid_points=8)
+    noise = accumulated_local_effects_2d(model.predict, X, (0, 4), grid_points=8)
+    assert surface["values"].shape == (8, 8)
+    assert np.isfinite(surface["values"]).all()
+    assert int(surface["counts"].sum()) == X.shape[0]
+    assert float(np.max(np.abs(noise["values"]))) <= float(np.max(np.abs(surface["values"]))) + 0.5
+
+
+def test_ale_2d_on_synthetic_product_predict_ranks_pairs():
+    X, _, _ = make_synthetic_data(n_samples=180, seed=31, noise=0.0)
+
+    def with_interaction(Z):
+        return 4.0 * Z[:, 0] + 3.0 * Z[:, 1] + 2.5 * Z[:, 0] * Z[:, 1]
+
+    interacting = accumulated_local_effects_2d(with_interaction, X, (0, 1), grid_points=10)
+    unused = accumulated_local_effects_2d(with_interaction, X, (0, 4), grid_points=10)
+    assert float(np.ptp(interacting["values"])) > 5.0 * float(np.ptp(unused["values"]))
+    assert np.allclose(unused["values"], 0.0, atol=1e-10)
