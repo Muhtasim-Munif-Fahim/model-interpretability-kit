@@ -73,6 +73,7 @@ def main():
                 pdp["upper"][-1],
             )
         )
+    print()
 
     print("=== Accumulated local effects ===")
     for f in (0, 1, 2):
@@ -100,6 +101,7 @@ def main():
         )
     )
 
+    print("=== Individual conditional expectation ===")
     ice = ice_curves(model.predict, X_eval, 0, grid_points=15, rows=[0, 1, 2, 3, 4])
     cice = ice_curves(
         model.predict, X_eval, 0, grid_points=15, rows=[0, 1, 2, 3, 4], centered=True
