@@ -2,9 +2,9 @@
 
 Builds the synthetic regression problem, fits the transparent decision tree,
 then computes permutation importance, 1-D partial dependence and ALE for
-three features, a 2-D ALE interaction surface, ICE curves for a few rows,
-LIME-style local explanations (plus exact interventional tree SHAP values)
-for two evaluation rows, a faithfulness summary, and writes
+three features, a 2-D ALE interaction surface, ICE and centered ICE curves
+for a few rows, LIME-style local explanations (plus exact interventional
+tree SHAP values) for two evaluation rows, a faithfulness summary, and writes
 ``output/demo_report.md``.
 
 Run from the repository root::
@@ -55,18 +55,22 @@ def main():
     print("=== Partial dependence ===")
     pdp_summaries = []
     for f in (0, 1, 2):
-        pdp = partial_dependence(model.predict, X_eval, f, grid_points=15)
+        pdp = partial_dependence(model.predict, X_eval, f, grid_points=15, conf_level=0.95)
         pdp_summaries.append(
             {"feature": feature_names[f], "grid": pdp["grid"], "values": pdp["values"]}
         )
         print(
-            "  %s: grid [%.3f, %.3f] -> predictions [%.3f, %.3f]"
+            "  %s: grid [%.3f, %.3f] -> predictions [%.3f, %.3f]  95%% CI [%.3f, %.3f] ... [%.3f, %.3f]"
             % (
                 feature_names[f],
                 pdp["grid"][0],
                 pdp["grid"][-1],
                 pdp["values"][0],
                 pdp["values"][-1],
+                pdp["lower"][0],
+                pdp["upper"][0],
+                pdp["lower"][-1],
+                pdp["upper"][-1],
             )
         )
 
@@ -97,9 +101,16 @@ def main():
     )
 
     ice = ice_curves(model.predict, X_eval, 0, grid_points=15, rows=[0, 1, 2, 3, 4])
+    cice = ice_curves(
+        model.predict, X_eval, 0, grid_points=15, rows=[0, 1, 2, 3, 4], centered=True
+    )
     print(
-        "  ICE curves for %s over %d rows, %d grid points each\n"
+        "  ICE curves for %s over %d rows, %d grid points each"
         % (feature_names[ice["feature"]], len(ice["rows"]), ice["curves"].shape[1])
+    )
+    print(
+        "  Centered ICE starts at 0; end-of-grid spread %.3f\n"
+        % float(np.ptp(cice["curves"][:, -1]))
     )
 
     print("=== Local explanations (LIME-style + interventional tree SHAP) ===")

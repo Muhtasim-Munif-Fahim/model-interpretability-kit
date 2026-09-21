@@ -1,9 +1,9 @@
 """Command-line interface for the interpretability toolkit.
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
-expose a single explanation type each: ``importance``, ``pdp``, ``ale``,
-``explain`` and ``report``. All randomness is seeded through ``--seed`` so
-runs are reproducible.
+expose a single explanation type each: ``importance``, ``pdp``, ``ice``,
+``ale``, ``explain`` and ``report``. All randomness is seeded through
+``--seed`` so runs are reproducible.
 """
 
 import argparse
@@ -16,7 +16,7 @@ from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import permutation_importance
 from .local import lime_explain
-from .partial_dependence import partial_dependence, partial_dependence_2d
+from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
 
 __all__ = ["main", "build_parser"]
@@ -38,6 +38,22 @@ def build_parser():
     p_pdp = sub.add_parser("pdp", help="partial dependence curves")
     p_pdp.add_argument("--features", default="0,1", help="one or two feature indices")
     p_pdp.add_argument("--grid-points", type=int, default=15)
+    p_pdp.add_argument(
+        "--conf-level",
+        type=float,
+        default=None,
+        help="optional 1-D confidence level in (0, 1), e.g. 0.95",
+    )
+
+    p_ice = sub.add_parser("ice", help="individual conditional expectation curves")
+    p_ice.add_argument("--features", default="0", help="one feature index")
+    p_ice.add_argument("--grid-points", type=int, default=15)
+    p_ice.add_argument("--rows", default="0,1,2,3,4", help="comma-separated row indices")
+    p_ice.add_argument(
+        "--centered",
+        action="store_true",
+        help="center each curve at the first grid point (c-ICE)",
+    )
 
     p_ale = sub.add_parser("ale", help="1-D or 2-D accumulated local effects")
     p_ale.add_argument("--features", default="0,1", help="one or two feature indices")
@@ -94,11 +110,23 @@ def _cmd_pdp(args):
     features = _parse_indices(args.features, "features")
     if len(features) == 1:
         f = features[0]
-        pdp = partial_dependence(model.predict, X, f, grid_points=args.grid_points)
-        print("Partial dependence for %s:" % names[f])
-        for grid_value, value in zip(pdp["grid"], pdp["values"]):
-            print("  %.4f -> %.4f" % (grid_value, value))
+        pdp = partial_dependence(
+            model.predict, X, f, grid_points=args.grid_points, conf_level=args.conf_level
+        )
+        if args.conf_level is None:
+            print("Partial dependence for %s:" % names[f])
+            for grid_value, value in zip(pdp["grid"], pdp["values"]):
+                print("  %.4f -> %.4f" % (grid_value, value))
+        else:
+            pct = 100.0 * args.conf_level
+            print("Partial dependence for %s (%.0f%% CI):" % (names[f], pct))
+            for grid_value, value, lo, hi in zip(
+                pdp["grid"], pdp["values"], pdp["lower"], pdp["upper"]
+            ):
+                print("  %.4f -> %.4f  [%.4f, %.4f]" % (grid_value, value, lo, hi))
     elif len(features) == 2:
+        if args.conf_level is not None:
+            sys.exit("confidence bands are only available for a single feature")
         surface = partial_dependence_2d(
             model.predict, X, tuple(features), grid_points=args.grid_points
         )
@@ -115,6 +143,35 @@ def _cmd_pdp(args):
         )
     else:
         sys.exit("--features expects one or two indices")
+    return 0
+
+
+def _cmd_ice(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    features = _parse_indices(args.features, "features")
+    if len(features) != 1:
+        sys.exit("--features expects a single index for ice")
+    f = features[0]
+    rows = _parse_indices(args.rows, "rows")
+    result = ice_curves(
+        model.predict,
+        X,
+        f,
+        grid_points=args.grid_points,
+        rows=rows,
+        centered=args.centered,
+    )
+    kind = "Centered ICE" if result["centered"] else "ICE"
+    print(
+        "%s curves for %s over %d rows, %d grid points each:"
+        % (kind, names[f], len(result["rows"]), result["curves"].shape[1])
+    )
+    for row_index, curve in zip(result["rows"], result["curves"]):
+        print(
+            "  row %d: %.4f ... %.4f (delta %+.4f)"
+            % (int(row_index), curve[0], curve[-1], curve[-1] - curve[0])
+        )
     return 0
 
 
@@ -228,6 +285,8 @@ def main(argv=None):
         return _cmd_importance(args)
     if args.command == "pdp":
         return _cmd_pdp(args)
+    if args.command == "ice":
+        return _cmd_ice(args)
     if args.command == "ale":
         return _cmd_ale(args)
     if args.command == "explain":

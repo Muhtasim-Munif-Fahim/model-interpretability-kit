@@ -13,9 +13,9 @@ truth is known, so every explanation can be checked against reality.
 | --- | --- | --- | --- |
 | Permutation importance | Drop in model score when a feature's column is shuffled | mean ± std importance per feature | Fisher, Rudin & Dominici, "All Models are Wrong, but Many Are Useful" (JMLR, 2019); Breiman, "Random Forests" (2001) |
 | Drop-column importance | Drop in score when a feature is removed and the model is refit | importance per feature | Same class of variable-importance measures |
-| Partial dependence (1-D / 2-D) | Average prediction as one or two features vary over a grid | curve / surface arrays | Friedman, "Greedy Function Approximation" (Annals of Statistics, 2001) |
+| Partial dependence (1-D / 2-D) | Average prediction as one or two features vary over a grid; 1-D can include a normal-approximation confidence band for that mean | curve / surface arrays | Friedman, "Greedy Function Approximation" (Annals of Statistics, 2001) |
 | Accumulated local effects (1-D / 2-D) | Accumulated local prediction change as one feature (or a pair) moves across quantile bins, centered to mean zero; 2-D is the pure interaction after main effects are removed | curve / surface arrays | Apley & Zhu, "Visualizing the Effects of Predictor Variables in Black Box Supervised Learning Models" (JASA, 2020) |
-| ICE curves | Per-row predictions as one feature varies | curve per row | Goldstein et al., "Peeking Inside the Black Box" (JCGS, 2015) |
+| ICE / centered ICE | Per-row predictions as one feature varies; optional centering at the first grid point so every curve starts at 0 | curve per row | Goldstein et al., "Peeking Inside the Black Box" (JCGS, 2015) |
 | LIME-style surrogate | Locally weighted linear fit around an instance | feature weights + intercept + local R2 | Ribeiro, Singh & Guestrin, "Why Should I Trust You?" (KDD, 2016) |
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
 | Faithfulness checks | Local surrogate R2; top-feature overlap between local and global attributions | per-instance numbers | Molnar, "Interpretable Machine Learning" (2022) |
@@ -48,7 +48,7 @@ from interpretability.ale import accumulated_local_effects, accumulated_local_ef
 from interpretability.demo_model import fit_decision_tree, make_synthetic_data
 from interpretability.importance import permutation_importance
 from interpretability.local import lime_explain
-from interpretability.partial_dependence import partial_dependence
+from interpretability.partial_dependence import ice_curves, partial_dependence
 
 X, y, names = make_synthetic_data(n_samples=300, seed=42)
 model = fit_decision_tree(X[:200], y[:200], max_depth=6, min_samples_leaf=5)
@@ -58,8 +58,8 @@ imp = permutation_importance(model.predict, X[200:], y[200:], n_repeats=10, seed
 print(imp["mean"], imp["std"])
 
 # Global: how does the prediction respond to feature 0?
-pdp = partial_dependence(model.predict, X[200:], 0, grid_points=20)
-print(pdp["grid"], pdp["values"])
+pdp = partial_dependence(model.predict, X[200:], 0, grid_points=20, conf_level=0.95)
+print(pdp["grid"], pdp["values"], pdp["lower"], pdp["upper"])
 
 # Global: same question without the PDP independence assumption
 ale = accumulated_local_effects(model.predict, X[200:], 0, grid_points=20)
@@ -68,6 +68,10 @@ print(ale["grid"], ale["values"])
 # Global: extra interaction of features 0 and 1 after main effects are removed
 ale2 = accumulated_local_effects_2d(model.predict, X[200:], (0, 1), grid_points=10)
 print(ale2["grid0"], ale2["grid1"], ale2["values"].shape)
+
+# Per row: does the average hide heterogeneous responses?
+ice = ice_curves(model.predict, X[200:], 0, grid_points=20, rows=range(8), centered=True)
+print(ice["grid"], ice["curves"].shape)
 
 # Local: why did row 0 get its prediction?
 exp = lime_explain(model.predict, X[200], X[200:], n_samples=400, seed=42, feature_names=names)
@@ -79,6 +83,8 @@ print(exp["coefficients"], exp["intercept"], exp["weighted_r2"])
 ```bash
 python -m interpretability.cli --seed 42 importance --n-repeats 10
 python -m interpretability.cli --seed 42 pdp --features 0,2
+python -m interpretability.cli --seed 42 pdp --features 0 --conf-level 0.95
+python -m interpretability.cli --seed 42 ice --features 0 --rows 0,1,2 --centered
 python -m interpretability.cli --seed 42 ale --features 0
 python -m interpretability.cli --seed 42 ale --features 0,2
 python -m interpretability.cli --seed 42 explain --rows 0,1
@@ -124,7 +130,11 @@ to support exact tree SHAP attribution.
   at each grid value, implicitly assuming the varied feature is independent
   of the others. In low-density regions of the data the average extrapolates
   outside the training distribution, and ICE curves help reveal whether the
-  averaged curve hides heterogeneous behavior.
+  averaged curve hides heterogeneous behavior. Optional 1-D confidence bands
+  are a normal approximation for sampling variability of that row average
+  (`mean ± z * std / sqrt(n)`); they are not a statement about parameter
+  uncertainty in the fitted model. Centered ICE subtracts each curve's value
+  at the first grid point so differences in slope are easier to compare.
 - **ALE vs partial dependence.** ALE estimates a feature's effect from finite
   differences inside quantile bins, so it does not require independence from
   the other features. The curve is centered to have mean zero over the data
