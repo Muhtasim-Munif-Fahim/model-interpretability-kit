@@ -11,9 +11,13 @@ DEFAULT_CAVEATS = [
     "noisy, so repeated shuffles and a seeded run are recommended.",
     "Partial dependence averages the model over all rows at each grid value, "
     "which implicitly assumes the varied feature is independent of the "
-    "others; accumulated local effects instead average finite differences "
-    "inside quantile bins, avoiding that independence assumption, and the "
-    "centered ALE curve is not a raw predicted value.",
+    "others; optional 1-D confidence bands capture sampling variability of "
+    "that average, not uncertainty in the fitted model. Accumulated local "
+    "effects instead average finite differences inside quantile bins, "
+    "avoiding that independence assumption, and the centered ALE curve is "
+    "not a raw predicted value. ICE curves show the same grid per row, "
+    "and centered ICE removes level differences so slope heterogeneity is "
+    "easier to see.",
     "LIME-style local explanations are linear approximations around a single "
     "instance: their weights are only meaningful within the neighborhood "
     "defined by the sampling width and kernel, and different widths can "

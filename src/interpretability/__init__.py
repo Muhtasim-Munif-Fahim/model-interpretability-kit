@@ -18,6 +18,13 @@ from .ale import (
     ale,
     ale_2d,
 )
+from .partial_dependence import (
+    ice,
+    ice_curves,
+    partial_dependence,
+    partial_dependence_2d,
+    pdp,
+)
 
 __version__ = "0.1.0"
 
@@ -26,4 +33,9 @@ __all__ = [
     "accumulated_local_effects_2d",
     "ale",
     "ale_2d",
+    "ice",
+    "ice_curves",
+    "partial_dependence",
+    "partial_dependence_2d",
+    "pdp",
 ]

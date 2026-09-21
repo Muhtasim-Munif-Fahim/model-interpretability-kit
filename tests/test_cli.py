@@ -32,6 +32,18 @@ def test_pdp_subcommand_single_feature(capsys):
     assert code == 0
     assert "Partial dependence for X1" in out
     assert "->" in out
+    assert "CI" not in out
+
+
+def test_pdp_subcommand_confidence_bands(capsys):
+    code = main(
+        ["--seed", "3", "--n-samples", "100", "pdp", "--features", "0", "--conf-level", "0.95"]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Partial dependence for X0 (95% CI)" in out
+    assert "[" in out
+    assert "]" in out
 
 
 def test_pdp_subcommand_two_features_surface(capsys):
@@ -40,6 +52,58 @@ def test_pdp_subcommand_two_features_surface(capsys):
     assert code == 0
     assert "2-D partial dependence X0 x X2" in out
     assert "5x5 surface" in out
+
+
+def test_pdp_subcommand_two_features_rejects_conf_level():
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--seed",
+                "3",
+                "--n-samples",
+                "80",
+                "pdp",
+                "--features",
+                "0,2",
+                "--conf-level",
+                "0.95",
+            ]
+        )
+
+
+def test_ice_subcommand_prints_curve_summaries(capsys):
+    code = main(
+        ["--seed", "3", "--n-samples", "100", "ice", "--features", "0", "--rows", "0,1,2"]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "ICE curves for X0 over 3 rows" in out
+    assert "row 0:" in out
+    assert "delta" in out
+    assert "Centered ICE" not in out
+
+
+def test_ice_subcommand_centered(capsys):
+    code = main(
+        [
+            "--seed",
+            "3",
+            "--n-samples",
+            "100",
+            "ice",
+            "--features",
+            "1",
+            "--rows",
+            "0,1",
+            "--centered",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Centered ICE curves for X1 over 2 rows" in out
+    # c-ICE pinches at the first grid point, so the printed start value is 0
+    first_row = next(line for line in out.splitlines() if "row 0:" in line)
+    assert "0.0000" in first_row
 
 
 def test_ale_subcommand_prints_curves(capsys):
