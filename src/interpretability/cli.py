@@ -1,8 +1,8 @@
 """Command-line interface for the interpretability toolkit.
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
-expose a single explanation type each: ``importance``, ``pdp``, ``ice``,
-``ale``, ``explain`` and ``report``. All randomness is seeded through
+expose a single explanation type each: ``importance``, ``loco``, ``pdp``,
+``ice``, ``ale``, ``explain`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -14,7 +14,7 @@ import numpy as np
 from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
-from .importance import permutation_importance
+from .importance import loco_importance, permutation_importance
 from .local import lime_explain
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
@@ -34,6 +34,15 @@ def build_parser():
 
     p_importance = sub.add_parser("importance", help="permutation feature importance")
     p_importance.add_argument("--n-repeats", type=int, default=5)
+
+    p_loco = sub.add_parser("loco", help="leave-one-covariate-out importance")
+    p_loco.add_argument("--n-repeats", type=int, default=3)
+    p_loco.add_argument(
+        "--test-size",
+        type=float,
+        default=0.25,
+        help="fraction of rows held out on each repeat",
+    )
 
     p_pdp = sub.add_parser("pdp", help="partial dependence curves")
     p_pdp.add_argument("--features", default="0,1", help="one or two feature indices")
@@ -99,6 +108,30 @@ def _cmd_importance(args):
     )
     order = np.argsort(-result["mean"])
     print("Permutation importance (baseline R2 = %.4f):" % result["baseline"])
+    for j in order:
+        print("  %-6s %8.4f +/- %.4f" % (names[j], result["mean"][j], result["std"][j]))
+    return 0
+
+
+def _fit_predict(X_fit, y_fit, X_eval):
+    return fit_decision_tree(X_fit, y_fit, max_depth=6, min_samples_leaf=5).predict(X_eval)
+
+
+def _cmd_loco(args):
+    X, y, names = _load_data(args)
+    result = loco_importance(
+        _fit_predict,
+        X,
+        y,
+        n_repeats=args.n_repeats,
+        test_size=args.test_size,
+        seed=args.seed,
+    )
+    order = np.argsort(-result["mean"])
+    print(
+        "LOCO importance (baseline MAE = %.4f, %d repeat%s):"
+        % (result["baseline"], result["n_repeats"], "" if result["n_repeats"] == 1 else "s")
+    )
     for j in order:
         print("  %-6s %8.4f +/- %.4f" % (names[j], result["mean"][j], result["std"][j]))
     return 0
@@ -283,6 +316,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "importance":
         return _cmd_importance(args)
+    if args.command == "loco":
+        return _cmd_loco(args)
     if args.command == "pdp":
         return _cmd_pdp(args)
     if args.command == "ice":

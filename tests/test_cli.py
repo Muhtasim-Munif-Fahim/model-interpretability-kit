@@ -26,6 +26,27 @@ def test_importance_subcommand_ranks_signal_over_noise(capsys):
     assert x4_score < 0.05
 
 
+def test_loco_subcommand_prints_table(capsys):
+    code = main(["--seed", "1", "--n-samples", "120", "loco", "--n-repeats", "2", "--test-size", "0.25"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "LOCO importance" in out
+    assert "baseline MAE" in out
+    assert "X0" in out
+    assert "X4" in out
+
+
+def test_loco_subcommand_ranks_signal_over_noise(capsys):
+    main(["--seed", "2", "--n-samples", "160", "loco", "--n-repeats", "2"])
+    out = capsys.readouterr().out
+    x0_line = next(line for line in out.splitlines() if "X0" in line)
+    x4_line = next(line for line in out.splitlines() if "X4" in line)
+    x0_score = float(x0_line.split()[1].split("+/-")[0])
+    x4_score = float(x4_line.split()[1].split("+/-")[0])
+    assert x0_score > x4_score
+    assert x4_score < 0.15
+
+
 def test_pdp_subcommand_single_feature(capsys):
     code = main(["--seed", "3", "--n-samples", "100", "pdp", "--features", "1"])
     out = capsys.readouterr().out

@@ -3,7 +3,7 @@
 This package provides global and local explanations for any model exposed as a
 plain callable ``predict(X) -> y``:
 
-* ``importance``: permutation and drop-column feature importance
+* ``importance``: permutation, drop-column, and leave-one-covariate-out importance
 * ``partial_dependence``: 1-D/2-D partial dependence plots and ICE curves
 * ``ale``: 1-D/2-D accumulated local effects curves and interaction surfaces
 * ``local``: LIME-style weighted linear surrogates and tree-based local attributions
