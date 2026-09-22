@@ -12,7 +12,8 @@ truth is known, so every explanation can be checked against reality.
 | Method | What it measures | Output | Reference |
 | --- | --- | --- | --- |
 | Permutation importance | Drop in model score when a feature's column is shuffled | mean ± std importance per feature | Fisher, Rudin & Dominici, "All Models are Wrong, but Many Are Useful" (JMLR, 2019); Breiman, "Random Forests" (2001) |
-| Drop-column importance | Drop in score when a feature is removed and the model is refit | importance per feature | Same class of variable-importance measures |
+| Drop-column importance | Drop in score when a feature is removed and the model is refit on the same rows | importance per feature | Same class of variable-importance measures |
+| Leave-one-covariate-out (LOCO) | Increase in held-out loss when a covariate is left out of the fit | mean ± std importance per feature | Lei, G'Sell, Rinaldo, Tibshirani & Wasserman, "Distribution-Free Predictive Inference for Regression" (JASA, 2018) |
 | Partial dependence (1-D / 2-D) | Average prediction as one or two features vary over a grid; 1-D can include a normal-approximation confidence band for that mean | curve / surface arrays | Friedman, "Greedy Function Approximation" (Annals of Statistics, 2001) |
 | Accumulated local effects (1-D / 2-D) | Accumulated local prediction change as one feature (or a pair) moves across quantile bins, centered to mean zero; 2-D is the pure interaction after main effects are removed | curve / surface arrays | Apley & Zhu, "Visualizing the Effects of Predictor Variables in Black Box Supervised Learning Models" (JASA, 2020) |
 | ICE / centered ICE | Per-row predictions as one feature varies; optional centering at the first grid point so every curve starts at 0 | curve per row | Goldstein et al., "Peeking Inside the Black Box" (JCGS, 2015) |
@@ -23,6 +24,20 @@ truth is known, so every explanation can be checked against reality.
 The broader conceptual framework and caveats are described in Christoph
 Molnar's book, *Interpretable Machine Learning*,
 https://christophm.github.io/interpretable-ml-book/.
+
+### Why LOCO is here
+
+Permutation importance is already part of this kit. `permutation_importance`
+shuffles one column at a time, measures the drop in a higher-is-better score
+(R² by default, or a custom scorer such as accuracy), and reports the mean
+and standard deviation across optional `n_repeats`. This change does not add
+a second permutation implementation. It adds leave-one-covariate-out (LOCO)
+importance instead: refit without each covariate and record how much
+held-out loss increases. Drop-column importance is the related in-sample
+refit; LOCO is the out-of-sample version, with repeats and a standard
+deviation across those repeats. The default loss is mean absolute error.
+`mean_squared_error` is a drop-in replacement, and `zero_one_loss` makes
+the importance the drop in classification accuracy.
 
 ## Install
 
@@ -46,7 +61,7 @@ python -m pytest tests -q
 import numpy as np
 from interpretability.ale import accumulated_local_effects, accumulated_local_effects_2d
 from interpretability.demo_model import fit_decision_tree, make_synthetic_data
-from interpretability.importance import permutation_importance
+from interpretability.importance import loco_importance, permutation_importance
 from interpretability.local import lime_explain
 from interpretability.partial_dependence import ice_curves, partial_dependence
 
@@ -56,6 +71,13 @@ model = fit_decision_tree(X[:200], y[:200], max_depth=6, min_samples_leaf=5)
 # Global: which features matter?
 imp = permutation_importance(model.predict, X[200:], y[200:], n_repeats=10, seed=42)
 print(imp["mean"], imp["std"])
+
+# Global: same question by refitting without each covariate (held-out loss)
+def fit_predict(X_fit, y_fit, X_eval):
+    return fit_decision_tree(X_fit, y_fit, max_depth=6, min_samples_leaf=5).predict(X_eval)
+
+loco = loco_importance(fit_predict, X[:200], y[:200], X_test=X[200:], y_test=y[200:])
+print(loco["mean"], loco["std"], loco["baseline"])  # baseline is MAE, lower is better
 
 # Global: how does the prediction respond to feature 0?
 pdp = partial_dependence(model.predict, X[200:], 0, grid_points=20, conf_level=0.95)
@@ -82,6 +104,7 @@ print(exp["coefficients"], exp["intercept"], exp["weighted_r2"])
 
 ```bash
 python -m interpretability.cli --seed 42 importance --n-repeats 10
+python -m interpretability.cli --seed 42 loco --n-repeats 5 --test-size 0.25
 python -m interpretability.cli --seed 42 pdp --features 0,2
 python -m interpretability.cli --seed 42 pdp --features 0 --conf-level 0.95
 python -m interpretability.cli --seed 42 ice --features 0 --rows 0,1,2 --centered
@@ -124,8 +147,17 @@ to support exact tree SHAP attribution.
 - **Importance variance.** Permutation importance uses random shuffles; with
   few repeats the estimates are noisy, and for correlated features the
   reported drop is diluted or inflated depending on how the signal is shared.
-  Drop-column importance refits the model, which is more faithful but much
-  more expensive.
+  Drop-column importance refits the model on the same rows, which is more
+  faithful to a removed column but much more expensive, and it can look
+  optimistic because the score is not held out. LOCO also refits once per
+  feature (and once per repeat), then measures the increase in loss on rows
+  that were not used for that fit. A single repeat has a standard deviation
+  of zero; raise `n_repeats` to see split-to-split variability. Correlated
+  covariates can look unimportant because the features that remain still
+  carry the signal, and a noisy feature can receive a small negative value
+  when leaving it out slightly improves the held-out loss. The LOCO
+  `baseline` is that held-out loss (lower is better), not the higher-is-better
+  score used by permutation importance.
 - **Partial dependence independence assumption.** PDP averages over all rows
   at each grid value, implicitly assuming the varied feature is independent
   of the others. In low-density regions of the data the average extrapolates

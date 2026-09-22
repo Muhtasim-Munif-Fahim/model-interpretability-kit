@@ -1,11 +1,11 @@
 """End-to-end demo of the interpretability toolkit.
 
 Builds the synthetic regression problem, fits the transparent decision tree,
-then computes permutation importance, 1-D partial dependence and ALE for
-three features, a 2-D ALE interaction surface, ICE and centered ICE curves
-for a few rows, LIME-style local explanations (plus exact interventional
-tree SHAP values) for two evaluation rows, a faithfulness summary, and writes
-``output/demo_report.md``.
+then computes permutation importance, leave-one-covariate-out importance,
+1-D partial dependence and ALE for three features, a 2-D ALE interaction
+surface, ICE and centered ICE curves for a few rows, LIME-style local
+explanations (plus exact interventional tree SHAP values) for two evaluation
+rows, a faithfulness summary, and writes ``output/demo_report.md``.
 
 Run from the repository root::
 
@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from interpretability.ale import accumulated_local_effects, accumulated_local_effects_2d
 from interpretability.demo_model import fit_decision_tree, make_synthetic_data
 from interpretability.evaluate import top_feature_overlap
-from interpretability.importance import permutation_importance
+from interpretability.importance import loco_importance, permutation_importance
 from interpretability.local import lime_explain, tree_shap_values
 from interpretability.partial_dependence import ice_curves, partial_dependence
 from interpretability.report import render_report
@@ -51,6 +51,18 @@ def main():
     print("  baseline R2 = %.4f" % importance["baseline"])
     top3 = [feature_names[j] for j in order[:3]]
     print("Top-3 features: %s\n" % ", ".join(top3))
+
+    def fit_predict(X_fit, y_fit, X_eval):
+        return fit_decision_tree(X_fit, y_fit, max_depth=6, min_samples_leaf=5).predict(X_eval)
+
+    loco = loco_importance(
+        fit_predict, X_train, y_train, X_test=X_eval, y_test=y_eval, n_repeats=3, seed=SEED
+    )
+    loco_order = np.argsort(-loco["mean"])
+    print("=== LOCO importance (MAE increase on the evaluation set) ===")
+    for j in loco_order:
+        print("  %-6s %8.4f +/- %.4f" % (feature_names[j], loco["mean"][j], loco["std"][j]))
+    print("  baseline MAE = %.4f\n" % loco["baseline"])
 
     print("=== Partial dependence ===")
     pdp_summaries = []
