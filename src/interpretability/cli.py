@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``loco``, ``pdp``,
-``ice``, ``ale``, ``explain`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -12,6 +12,7 @@ import sys
 import numpy as np
 
 from .ale import accumulated_local_effects, accumulated_local_effects_2d
+from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import loco_importance, permutation_importance
@@ -67,6 +68,10 @@ def build_parser():
     p_ale = sub.add_parser("ale", help="1-D or 2-D accumulated local effects")
     p_ale.add_argument("--features", default="0,1", help="one or two feature indices")
     p_ale.add_argument("--grid-points", type=int, default=15)
+
+    p_h = sub.add_parser("h-statistic", help="Friedman H-statistic for a feature pair")
+    p_h.add_argument("--features", default="0,1", help="two feature indices")
+    p_h.add_argument("--grid-points", type=int, default=15)
 
     p_explain = sub.add_parser("explain", help="local LIME-style explanations")
     p_explain.add_argument("--rows", default="0,1", help="comma-separated row indices")
@@ -240,6 +245,24 @@ def _cmd_ale(args):
     return 0
 
 
+
+def _cmd_h_statistic(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    indices = _parse_indices(args.features, "features")
+    if len(indices) != 2:
+        raise SystemExit("h-statistic expects exactly two feature indices")
+    result = friedman_h_statistic(
+        model.predict, X, indices, grid_points=args.grid_points
+    )
+    j, k = result["feature_indices"]
+    print(
+        "Friedman H-statistic for %s x %s: H=%.4f  H^2=%.4f"
+        % (names[j], names[k], result["h"], result["h_squared"])
+    )
+    return 0
+
+
 def _cmd_explain(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -324,6 +347,8 @@ def main(argv=None):
         return _cmd_ice(args)
     if args.command == "ale":
         return _cmd_ale(args)
+    if args.command == "h-statistic":
+        return _cmd_h_statistic(args)
     if args.command == "explain":
         return _cmd_explain(args)
     if args.command == "report":
