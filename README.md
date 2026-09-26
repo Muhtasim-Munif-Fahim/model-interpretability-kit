@@ -16,6 +16,7 @@ truth is known, so every explanation can be checked against reality.
 | Leave-one-covariate-out (LOCO) | Increase in held-out loss when a covariate is left out of the fit | mean ± std importance per feature | Lei, G'Sell, Rinaldo, Tibshirani & Wasserman, "Distribution-Free Predictive Inference for Regression" (JASA, 2018) |
 | Partial dependence (1-D / 2-D) | Average prediction as one or two features vary over a grid; 1-D can include a normal-approximation confidence band for that mean | curve / surface arrays | Friedman, "Greedy Function Approximation" (Annals of Statistics, 2001) |
 | Accumulated local effects (1-D / 2-D) | Accumulated local prediction change as one feature (or a pair) moves across quantile bins, centered to mean zero; 2-D is the pure interaction after main effects are removed | curve / surface arrays | Apley & Zhu, "Visualizing the Effects of Predictor Variables in Black Box Supervised Learning Models" (JASA, 2020) |
+| Friedman H-statistic | Strength of pairwise interaction: share of joint PD variation not explained by the sum of main-effect PDs | scalar in [0, 1] | Friedman & Popescu, "Predictive Learning via Rule Ensembles" (Annals of Applied Statistics, 2008) |
 | ICE / centered ICE | Per-row predictions as one feature varies; optional centering at the first grid point so every curve starts at 0 | curve per row | Goldstein et al., "Peeking Inside the Black Box" (JCGS, 2015) |
 | LIME-style surrogate | Locally weighted linear fit around an instance | feature weights + intercept + local R2 | Ribeiro, Singh & Guestrin, "Why Should I Trust You?" (KDD, 2016) |
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
@@ -38,6 +39,35 @@ refit; LOCO is the out-of-sample version, with repeats and a standard
 deviation across those repeats. The default loss is mean absolute error.
 `mean_squared_error` is a drop-in replacement, and `zero_one_loss` makes
 the importance the drop in classification accuracy.
+
+
+### Friedman H-statistic
+
+`friedman_h_statistic` (alias `h_statistic`) measures pairwise interaction
+strength from partial dependence. For features `j` and `k`:
+
+```text
+H^2_jk = sum_i [PD_jk(x_i^j, x_i^k) - PD_j(x_i^j) - PD_k(x_i^k)]^2
+       / sum_i [PD_jk(x_i^j, x_i^k)]^2
+```
+
+with each PD centered to mean zero over the evaluation rows. `H` near 0 means
+the joint effect is additive; near 1 means almost all of the joint PD is
+interaction. This sits alongside PDP, ALE, and LOCO as a global diagnostic.
+
+```python
+from interpretability import friedman_h_statistic
+from interpretability.demo_model import fit_decision_tree, make_synthetic_data
+
+X, y, names = make_synthetic_data(n_samples=300, seed=42)
+model = fit_decision_tree(X, y, max_depth=6, min_samples_leaf=5)
+h = friedman_h_statistic(model.predict, X, (0, 1), grid_points=15)
+print(names[0], names[1], h["h"], h["h_squared"])
+```
+
+```bash
+python -m interpretability.cli h-statistic --features 0,1 --grid-points 15
+```
 
 ## Install
 
@@ -63,6 +93,7 @@ from interpretability.ale import accumulated_local_effects, accumulated_local_ef
 from interpretability.demo_model import fit_decision_tree, make_synthetic_data
 from interpretability.importance import loco_importance, permutation_importance
 from interpretability.local import lime_explain
+from interpretability.interaction import friedman_h_statistic
 from interpretability.partial_dependence import ice_curves, partial_dependence
 
 X, y, names = make_synthetic_data(n_samples=300, seed=42)
@@ -94,6 +125,10 @@ print(ale2["grid0"], ale2["grid1"], ale2["values"].shape)
 # Per row: does the average hide heterogeneous responses?
 ice = ice_curves(model.predict, X[200:], 0, grid_points=20, rows=range(8), centered=True)
 print(ice["grid"], ice["curves"].shape)
+
+# Pairwise interaction strength (Friedman H)
+h = friedman_h_statistic(model.predict, X[200:], (0, 1), grid_points=15)
+print(h["h"], h["h_squared"])
 
 # Local: why did row 0 get its prediction?
 exp = lime_explain(model.predict, X[200], X[200:], n_samples=400, seed=42, feature_names=names)

@@ -165,3 +165,13 @@ def test_report_subcommand_writes_file(tmp_path, capsys):
 def test_cli_missing_command_raises_system_exit():
     with pytest.raises(SystemExit):
         main(["--seed", "1"])
+
+
+def test_h_statistic_subcommand(capsys):
+    code = main(
+        ["--seed", "3", "--n-samples", "120", "h-statistic", "--features", "0,1", "--grid-points", "8"]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Friedman H-statistic" in out
+    assert "H=" in out

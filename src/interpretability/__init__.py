@@ -6,6 +6,7 @@ plain callable ``predict(X) -> y``:
 * ``importance``: permutation, drop-column, and leave-one-covariate-out importance
 * ``partial_dependence``: 1-D/2-D partial dependence plots and ICE curves
 * ``ale``: 1-D/2-D accumulated local effects curves and interaction surfaces
+* ``interaction``: Friedman H-statistic for pairwise interaction strength
 * ``local``: LIME-style weighted linear surrogates and tree-based local attributions
 * ``evaluate``: faithfulness checks for local explanations
 * ``report``: markdown report rendering
@@ -18,6 +19,7 @@ from .ale import (
     ale,
     ale_2d,
 )
+from .interaction import friedman_h_statistic, h_statistic
 from .partial_dependence import (
     ice,
     ice_curves,
@@ -38,4 +40,6 @@ __all__ = [
     "partial_dependence",
     "partial_dependence_2d",
     "pdp",
+    "friedman_h_statistic",
+    "h_statistic",
 ]
