@@ -1,8 +1,14 @@
-"""Local explanations: LIME-style surrogates and tree-based attributions.
+"""Local explanations: LIME-style surrogates, Kernel SHAP, and tree attributions.
 
 ``lime_explain`` fits a weighted linear surrogate over a random neighborhood
 of the instance to be explained, so the explanation is interpretable at the
 cost of locality.
+
+``kernel_shap`` is a model-agnostic Kernel SHAP-lite estimator (Lundberg &
+Lee, 2017): it samples feature coalitions, evaluates the model under an
+interventional replacement of missing features from a background dataset,
+and recovers Shapley values by weighted least squares with the Shapley
+kernel.
 
 For the small regression trees produced by ``interpretability.demo_model``,
 ``tree_shap_values`` computes exact interventional SHAP values: Shapley
@@ -26,6 +32,8 @@ __all__ = [
     "tree_conditional_expectation",
     "tree_shap_values",
     "local_occlusion_attribution",
+    "kernel_shap",
+    "shapley_kernel_weight",
 ]
 
 
@@ -284,3 +292,160 @@ def local_occlusion_attribution(predict, x_row, background, n_samples=200, seed=
         values[j] = prediction - float(np.mean(predict(pinned)))
     baseline = float(np.mean(predict(draws)))
     return {"values": values, "baseline": baseline, "prediction": prediction}
+
+
+def shapley_kernel_weight(coalition_size, n_features):
+    """Shapley kernel weight for a coalition of the given size.
+
+    ``π(|S|) = (M - 1) / (C(M, |S|) * |S| * (M - |S|))`` for
+    ``0 < |S| < M``. Empty and full coalitions are undefined in the
+    classical kernel (they pin the intercept / efficiency constraint);
+    this helper returns ``inf`` for those sizes so callers can treat them
+    specially.
+    """
+    m = int(n_features)
+    s = int(coalition_size)
+    if m < 1:
+        raise ValueError("n_features must be at least 1")
+    if s < 0 or s > m:
+        raise ValueError("coalition_size must lie in [0, n_features]")
+    if s == 0 or s == m:
+        return float("inf")
+    # C(M, s) = M! / (s! (M-s)!)
+    from math import comb
+
+    return (m - 1) / (comb(m, s) * s * (m - s))
+
+
+def kernel_shap(
+    predict,
+    x_row,
+    background,
+    n_samples=200,
+    l2=1e-6,
+    seed=None,
+    feature_names=None,
+):
+    """Model-agnostic Kernel SHAP-lite attributions for one instance.
+
+    Samples binary coalitions ``z'``, builds interventional synthetic
+    rows (features present in the coalition come from ``x_row``, the
+    rest are drawn from a background row), evaluates ``predict``, and
+    solves the Shapley-kernel weighted regression
+
+    ``g(z') = φ_0 + sum_j φ_j z'_j``.
+
+    Empty and full coalitions are always included with a large finite
+    weight so the fit recovers the baseline ``E[f(background)]`` and the
+    efficiency constraint ``sum φ = f(x) - φ_0``.
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y_pred`` for a 2-D ``X``.
+    x_row : sequence of float
+        Instance to explain.
+    background : ndarray
+        Reference dataset used to replace missing features.
+    n_samples : int
+        Number of random coalitions in addition to the empty/full pair.
+        When ``2 ** n_features - 2 <= n_samples`` every non-trivial
+        coalition is enumerated exactly once (exact Kernel SHAP for
+        small feature counts).
+    l2 : float
+        Ridge term for the weighted least-squares solve.
+    seed : int or None
+    feature_names : list of str or None
+
+    Returns
+    -------
+    dict
+        ``{"values": ndarray, "baseline": float, "prediction": float,
+        "n_samples": int, "feature_names": list, "weighted_r2": float}``.
+        ``values`` sum (approximately) to ``prediction - baseline``.
+    """
+    x_row = np.asarray(x_row, dtype=float).ravel()
+    background = as_2d(background)
+    m = background.shape[1]
+    if x_row.shape[0] != m:
+        raise ValueError("x_row and background must have the same number of features")
+    if background.shape[0] < 1:
+        raise ValueError("background must contain at least one row")
+    if n_samples < 1:
+        raise ValueError("n_samples must be at least 1")
+
+    rng = np.random.default_rng(seed)
+    prediction = float(predict(x_row[None, :])[0])
+    baseline_pred = float(np.mean(predict(background)))
+
+    # Enumerate all non-trivial coalitions when the feature count is small.
+    max_nontrivial = (1 << m) - 2
+    if m <= 12 and max_nontrivial <= n_samples:
+        masks = []
+        for bits in range(1, (1 << m) - 1):
+            mask = np.array([(bits >> j) & 1 for j in range(m)], dtype=float)
+            masks.append(mask)
+        masks = np.asarray(masks, dtype=float)
+    else:
+        # Sample random non-empty/non-full masks; reject degenerates.
+        masks = []
+        seen = set()
+        attempts = 0
+        target = int(n_samples)
+        while len(masks) < target and attempts < target * 20:
+            attempts += 1
+            mask = rng.integers(0, 2, size=m).astype(float)
+            key = tuple(mask.tolist())
+            if key in seen or mask.sum() == 0 or mask.sum() == m:
+                continue
+            seen.add(key)
+            masks.append(mask)
+        if not masks:
+            # Fallback: single-feature coalitions.
+            masks = [np.eye(m)[j] for j in range(m)]
+        masks = np.asarray(masks, dtype=float)
+
+    # Always pin empty / full coalitions.
+    empty = np.zeros(m, dtype=float)
+    full = np.ones(m, dtype=float)
+    all_masks = np.vstack([empty[None, :], full[None, :], masks])
+
+    # Interventional mean-imputation: missing features take the background
+    # column mean. This keeps Kernel SHAP-lite deterministic given the
+    # coalition sample and recovers exact φ for linear models.
+    bg_mean = background.mean(axis=0)
+    synthetic = np.tile(bg_mean, (all_masks.shape[0], 1))
+    for i, mask in enumerate(all_masks):
+        present = mask > 0.5
+        synthetic[i, present] = x_row[present]
+    y = np.asarray(predict(synthetic), dtype=float).ravel()
+
+    # Shapley kernel weights; large finite weight for empty/full.
+    pin_weight = 1e6
+    weights = np.empty(all_masks.shape[0], dtype=float)
+    weights[0] = pin_weight
+    weights[1] = pin_weight
+    for i in range(2, all_masks.shape[0]):
+        weights[i] = shapley_kernel_weight(int(all_masks[i].sum()), m)
+
+    design = np.column_stack([np.ones(all_masks.shape[0]), all_masks])
+    coefs = weighted_least_squares(design, y, weights, l2=l2)
+    baseline = float(coefs[0])
+    values = coefs[1:]
+    fitted = design @ coefs
+    # Prefer reporting the empirical background mean as baseline when the
+    # pin is active; keep the regression intercept close to it.
+    if feature_names is None:
+        feature_names = ["X%d" % j for j in range(m)]
+    # With empty/full coalitions pinned, the WLS intercept is f(bg_mean)
+    # and sum(values) recovers prediction - baseline (efficiency).
+    return {
+        "values": np.asarray(values, dtype=float),
+        "baseline": float(baseline),
+        "prediction": prediction,
+        "n_samples": int(all_masks.shape[0]),
+        "feature_names": list(feature_names),
+        "weighted_r2": _weighted_r2(y, fitted, weights),
+        "background_mean_prediction": float(baseline_pred),
+    }
+
