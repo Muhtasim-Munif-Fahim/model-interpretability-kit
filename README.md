@@ -20,6 +20,7 @@ truth is known, so every explanation can be checked against reality.
 | ICE / centered ICE | Per-row predictions as one feature varies; optional centering at the first grid point so every curve starts at 0 | curve per row | Goldstein et al., "Peeking Inside the Black Box" (JCGS, 2015) |
 | LIME-style surrogate | Locally weighted linear fit around an instance | feature weights + intercept + local R2 | Ribeiro, Singh & Guestrin, "Why Should I Trust You?" (KDD, 2016) |
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
+| Kernel SHAP-lite | Model-agnostic Shapley values via coalition sampling + Shapley-kernel WLS | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee (NeurIPS, 2017) |
 | Faithfulness checks | Local surrogate R2; top-feature overlap between local and global attributions | per-instance numbers | Molnar, "Interpretable Machine Learning" (2022) |
 
 The broader conceptual framework and caveats are described in Christoph
@@ -95,6 +96,7 @@ from interpretability.importance import loco_importance, permutation_importance
 from interpretability.local import lime_explain
 from interpretability.interaction import friedman_h_statistic
 from interpretability.partial_dependence import ice_curves, partial_dependence
+from interpretability.local import kernel_shap
 
 X, y, names = make_synthetic_data(n_samples=300, seed=42)
 model = fit_decision_tree(X[:200], y[:200], max_depth=6, min_samples_leaf=5)
@@ -126,6 +128,10 @@ print(ale2["grid0"], ale2["grid1"], ale2["values"].shape)
 ice = ice_curves(model.predict, X[200:], 0, grid_points=20, rows=range(8), centered=True)
 print(ice["grid"], ice["curves"].shape)
 
+ks = kernel_shap(model.predict, X[200], X[200:], n_samples=256, seed=0)
+print(ks["values"], ks["baseline"], ks["prediction"])
+
+
 # Pairwise interaction strength (Friedman H)
 h = friedman_h_statistic(model.predict, X[200:], (0, 1), grid_points=15)
 print(h["h"], h["h_squared"])
@@ -143,6 +149,7 @@ python -m interpretability.cli --seed 42 loco --n-repeats 5 --test-size 0.25
 python -m interpretability.cli --seed 42 pdp --features 0,2
 python -m interpretability.cli --seed 42 pdp --features 0 --conf-level 0.95
 python -m interpretability.cli --seed 42 ice --features 0 --rows 0,1,2 --centered
+python -m interpretability.cli --seed 42 kernel-shap --rows 0,1 --n-samples 200
 python -m interpretability.cli --seed 42 ale --features 0
 python -m interpretability.cli --seed 42 ale --features 0,2
 python -m interpretability.cli --seed 42 explain --rows 0,1

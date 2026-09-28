@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``loco``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -16,7 +16,7 @@ from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import loco_importance, permutation_importance
-from .local import lime_explain
+from .local import kernel_shap, lime_explain
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
 
@@ -76,6 +76,10 @@ def build_parser():
     p_explain = sub.add_parser("explain", help="local LIME-style explanations")
     p_explain.add_argument("--rows", default="0,1", help="comma-separated row indices")
     p_explain.add_argument("--n-samples", type=int, default=300, help="perturbations per row")
+
+    p_kshap = sub.add_parser("kernel-shap", help="Kernel SHAP-lite local attributions")
+    p_kshap.add_argument("--rows", default="0,1", help="comma-separated row indices")
+    p_kshap.add_argument("--n-samples", type=int, default=200, help="coalition samples per row")
 
     p_report = sub.add_parser("report", help="write a markdown report")
     p_report.add_argument("--out", default="demo_report.md")
@@ -287,6 +291,35 @@ def _cmd_explain(args):
     return 0
 
 
+
+def _cmd_kernel_shap(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    rows = _parse_indices(args.rows, "rows")
+    for i in rows:
+        if i < 0 or i >= X.shape[0]:
+            sys.exit("row index %d out of range" % i)
+        result = kernel_shap(
+            model.predict,
+            X[i],
+            X,
+            n_samples=args.n_samples,
+            seed=args.seed,
+            feature_names=names,
+        )
+        print(
+            "Kernel SHAP for row %d (prediction %.4f, baseline %.4f, fidelity %.3f):"
+            % (i, result["prediction"], result["baseline"], result["weighted_r2"])
+        )
+        for j, val in enumerate(result["values"]):
+            print("  %-6s %8.4f" % (names[j], val))
+        print(
+            "  sum(phi)=%.4f  f(x)-baseline=%.4f"
+            % (float(np.sum(result["values"])), result["prediction"] - result["baseline"])
+        )
+    return 0
+
+
 def _cmd_report(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -351,6 +384,8 @@ def main(argv=None):
         return _cmd_h_statistic(args)
     if args.command == "explain":
         return _cmd_explain(args)
+    if args.command == "kernel-shap":
+        return _cmd_kernel_shap(args)
     if args.command == "report":
         return _cmd_report(args)
     return 0
