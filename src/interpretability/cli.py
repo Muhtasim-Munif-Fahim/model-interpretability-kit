@@ -1,7 +1,7 @@
 """Command-line interface for the interpretability toolkit.
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
-expose a single explanation type each: ``importance``, ``loco``, ``pdp``,
+expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``pdp``,
 ``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
@@ -15,7 +15,7 @@ from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
-from .importance import loco_importance, permutation_importance
+from .importance import loco_importance, permutation_importance, sobol_first_order
 from .local import kernel_shap, lime_explain
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
@@ -80,6 +80,9 @@ def build_parser():
     p_kshap = sub.add_parser("kernel-shap", help="Kernel SHAP-lite local attributions")
     p_kshap.add_argument("--rows", default="0,1", help="comma-separated row indices")
     p_kshap.add_argument("--n-samples", type=int, default=200, help="coalition samples per row")
+
+    p_sobol = sub.add_parser("sobol", help="Sobol first-order sensitivity indices")
+    p_sobol.add_argument("--n-samples", type=int, default=512, help="Saltelli sample size N")
 
     p_report = sub.add_parser("report", help="write a markdown report")
     p_report.add_argument("--out", default="demo_report.md")
@@ -292,6 +295,20 @@ def _cmd_explain(args):
 
 
 
+
+def _cmd_sobol(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    result = sobol_first_order(
+        model.predict, X, n_samples=args.n_samples, seed=args.seed
+    )
+    order = np.argsort(-result["S1"])
+    print("Sobol first-order indices (Var(f) = %.4f, N = %d):" % (result["variance"], result["n_samples"]))
+    for j in order:
+        print("  %-6s %8.4f" % (names[j], result["S1"][j]))
+    return 0
+
+
 def _cmd_kernel_shap(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -386,6 +403,8 @@ def main(argv=None):
         return _cmd_explain(args)
     if args.command == "kernel-shap":
         return _cmd_kernel_shap(args)
+    if args.command == "sobol":
+        return _cmd_sobol(args)
     if args.command == "report":
         return _cmd_report(args)
     return 0

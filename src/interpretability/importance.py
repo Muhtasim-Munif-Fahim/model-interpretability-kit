@@ -1,4 +1,4 @@
-"""Global feature importance: permutation, drop-column, and LOCO.
+"""Global feature importance: permutation, drop-column, LOCO, and Sobol indices.
 
 These methods are model-agnostic. Permutation importance only needs a
 ``predict`` callable. Drop-column and leave-one-covariate-out (LOCO)
@@ -20,6 +20,7 @@ __all__ = [
     "permutation_importance",
     "drop_column_importance",
     "loco_importance",
+    "sobol_first_order",
 ]
 
 
@@ -348,3 +349,94 @@ def loco_importance(
         "baseline": float(baselines.mean()),
         "n_repeats": n_repeats,
     }
+
+
+def _feature_bounds(X):
+    """Per-feature (low, high) ranges from training rows; expand degenerate cols."""
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2:
+        raise ValueError("X must be a 2d array")
+    if X.shape[0] < 2:
+        raise ValueError("X must have at least two rows to estimate feature ranges")
+    lows = X.min(axis=0)
+    highs = X.max(axis=0)
+    for j in range(X.shape[1]):
+        if highs[j] <= lows[j]:
+            # Degenerate column: use a tiny symmetric window around the value.
+            center = float(lows[j])
+            lows[j] = center - 1e-6
+            highs[j] = center + 1e-6
+    return lows, highs
+
+
+def sobol_first_order(predict, X, n_samples=512, seed=None):
+    """Sobol first-order sensitivity indices via Saltelli / pick-freeze sampling.
+
+    Draws two independent design matrices ``A`` and ``B`` uniformly inside the
+    axis-aligned box spanned by the training features ``X``. For each feature
+    ``i`` forms the pick-freeze matrix ``A_B^(i)`` (all columns from ``A``
+    except column ``i`` taken from ``B``) and estimates the first-order Sobol
+    index with Jansen's formula
+
+    ``S1_i = 1 - (1/(2N)) sum_j (f(B)_j - f(A_B^(i))_j)^2  /  Var(Y)``.
+
+    Indices are clipped to ``[0, 1]``. Features that do not affect ``predict``
+    receive near-zero ``S1``; additive main effects recover approximately the
+    fraction of output variance they explain.
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y`` with ``y`` shape ``(n,)``.
+    X : array-like of shape (n_rows, n_features)
+        Training (or background) data used only to set per-feature ranges.
+    n_samples : int
+        Saltelli sample size ``N`` (number of rows in ``A`` / ``B``).
+    seed : int, optional
+        RNG seed for the uniform draws.
+
+    Returns
+    -------
+    dict
+        ``{"S1": ndarray (n_features,), "variance": float, "n_samples": int}``.
+    """
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2:
+        raise ValueError("X must be a 2d array")
+    n_features = X.shape[1]
+    if n_features < 1:
+        raise ValueError("X must have at least one feature")
+    if isinstance(n_samples, bool) or not isinstance(n_samples, (int, np.integer)) or n_samples < 2:
+        raise ValueError("n_samples must be an integer >= 2")
+    n_samples = int(n_samples)
+
+    lows, highs = _feature_bounds(X)
+    rng = np.random.default_rng(seed)
+    span = highs - lows
+    A = lows + span * rng.random((n_samples, n_features))
+    B = lows + span * rng.random((n_samples, n_features))
+
+    f_A = np.asarray(predict(A), dtype=float).ravel()
+    f_B = np.asarray(predict(B), dtype=float).ravel()
+    if f_A.shape[0] != n_samples or f_B.shape[0] != n_samples:
+        raise ValueError("predict must return one value per row")
+    # Pool A and B for a stabler total-variance estimate.
+    variance = float(np.var(np.concatenate([f_A, f_B]), ddof=0))
+    S1 = np.zeros(n_features, dtype=float)
+    if variance <= 0.0 or not np.isfinite(variance):
+        return {"S1": S1, "variance": variance, "n_samples": n_samples}
+
+    for i in range(n_features):
+        # A_B^(i): all columns from A except column i taken from B.
+        AB_i = A.copy()
+        AB_i[:, i] = B[:, i]
+        f_ABi = np.asarray(predict(AB_i), dtype=float).ravel()
+        if f_ABi.shape[0] != n_samples:
+            raise ValueError("predict must return one value per row")
+        # Jansen (1999) first-order estimator:
+        # S_i = 1 - (1/(2N)) sum (f(B) - f(A_B^(i)))^2 / V
+        s = 1.0 - (0.5 / n_samples) * np.sum((f_B - f_ABi) ** 2) / variance
+        S1[i] = float(np.clip(s, 0.0, 1.0))
+
+    return {"S1": S1, "variance": variance, "n_samples": n_samples}
+

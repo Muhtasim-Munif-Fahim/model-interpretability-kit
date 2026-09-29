@@ -3,7 +3,7 @@
 This package provides global and local explanations for any model exposed as a
 plain callable ``predict(X) -> y``:
 
-* ``importance``: permutation, drop-column, and leave-one-covariate-out importance
+* ``importance``: permutation, drop-column, leave-one-covariate-out, and Sobol first-order indices
 * ``partial_dependence``: 1-D/2-D partial dependence plots and ICE curves
 * ``ale``: 1-D/2-D accumulated local effects curves and interaction surfaces
 * ``interaction``: Friedman H-statistic for pairwise interaction strength
@@ -20,6 +20,7 @@ from .ale import (
     ale_2d,
 )
 from .interaction import friedman_h_statistic, h_statistic
+from .importance import sobol_first_order
 from .local import kernel_shap
 from .partial_dependence import (
     ice,
@@ -44,4 +45,5 @@ __all__ = [
     "friedman_h_statistic",
     "h_statistic",
     "kernel_shap",
+    "sobol_first_order",
 ]
