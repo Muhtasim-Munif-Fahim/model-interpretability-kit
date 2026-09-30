@@ -1,11 +1,11 @@
-"""Global feature importance: permutation, drop-column, LOCO, and Sobol indices.
+"""Global feature importance: permutation, drop-column, LOCO, Sobol, and Morris.
 
 These methods are model-agnostic. Permutation importance only needs a
 ``predict`` callable. Drop-column and leave-one-covariate-out (LOCO)
 importance refit through a ``fit_predict`` callable and measure how the
 model degrades when a feature is removed. Permutation and drop-column score
 a higher-is-better metric; LOCO scores a lower-is-better loss on held-out
-rows.
+rows. Sobol and Morris screening also need only ``predict``.
 """
 
 import numpy as np
@@ -21,6 +21,8 @@ __all__ = [
     "drop_column_importance",
     "loco_importance",
     "sobol_first_order",
+    "morris_screening",
+    "morris_elementary_effects",
 ]
 
 
@@ -439,4 +441,136 @@ def sobol_first_order(predict, X, n_samples=512, seed=None):
         S1[i] = float(np.clip(s, 0.0, 1.0))
 
     return {"S1": S1, "variance": variance, "n_samples": n_samples}
+
+
+
+def morris_screening(
+    predict,
+    X,
+    n_trajectories=20,
+    n_levels=4,
+    seed=None,
+):
+    """Morris elementary-effects screening (mu* and sigma).
+
+    Builds ``n_trajectories`` one-at-a-time trajectories on a regular grid
+    spanning the axis-aligned box of the background sample ``X``. Along each
+    trajectory every feature is perturbed once by a step of size
+    ``delta = n_levels / (2 * (n_levels - 1))`` of the feature's range
+    (Campolongo / Saltelli convention for even ``n_levels``). The elementary
+    effect of feature ``i`` on trajectory ``r`` is
+
+    ``EE_i^{(r)} = (f(x + delta_i e_i) - f(x)) / delta_i``.
+
+    Returns the trajectory-wise mean ``mu``, the mean of absolute effects
+    ``mu_star`` (Campolongo's importance measure), and the standard deviation
+    ``sigma`` of the elementary effects. Features that do not affect
+    ``predict`` receive near-zero ``mu_star``; nonlinear / interaction effects
+    inflate ``sigma`` relative to ``mu_star``.
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y`` with ``y`` shape ``(n,)``.
+    X : array-like of shape (n_rows, n_features)
+        Background data used only to set per-feature ranges.
+    n_trajectories : int
+        Number of Morris trajectories (``r``).
+    n_levels : int
+        Number of grid levels ``p`` (must be even and >= 2).
+    seed : int, optional
+        RNG seed.
+
+    Returns
+    -------
+    dict
+        ``{"mu": ndarray, "mu_star": ndarray, "sigma": ndarray,
+        "n_trajectories": int, "n_levels": int}``.
+    """
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2:
+        raise ValueError("X must be a 2d array")
+    n_features = X.shape[1]
+    if n_features < 1:
+        raise ValueError("X must have at least one feature")
+    if (
+        isinstance(n_trajectories, bool)
+        or not isinstance(n_trajectories, (int, np.integer))
+        or n_trajectories < 1
+    ):
+        raise ValueError("n_trajectories must be an integer >= 1")
+    if (
+        isinstance(n_levels, bool)
+        or not isinstance(n_levels, (int, np.integer))
+        or n_levels < 2
+        or n_levels % 2 != 0
+    ):
+        raise ValueError("n_levels must be an even integer >= 2")
+    n_trajectories = int(n_trajectories)
+    n_levels = int(n_levels)
+
+    lows, highs = _feature_bounds(X)
+    span = highs - lows
+    # Scaled step in [0, 1] unit cube; Campolongo delta for even p.
+    delta = n_levels / (2.0 * (n_levels - 1))
+    grid = np.linspace(0.0, 1.0, n_levels)
+    # Starting levels must leave room for +delta.
+    start_levels = grid[grid <= 1.0 - delta + 1e-12]
+    if start_levels.size == 0:
+        start_levels = np.array([0.0])
+
+    rng = np.random.default_rng(seed)
+    effects = np.zeros((n_trajectories, n_features), dtype=float)
+
+    for r in range(n_trajectories):
+        # Random starting point on the grid (unit cube).
+        x = np.array([rng.choice(start_levels) for _ in range(n_features)], dtype=float)
+        # Random order of factors to flip.
+        order = rng.permutation(n_features)
+        # Evaluate at the base of the trajectory.
+        x_real = lows + span * x
+        f_curr = float(np.asarray(predict(x_real.reshape(1, -1)), dtype=float).ravel()[0])
+        for i in order:
+            x_next = x.copy()
+            x_next[i] = x_next[i] + delta
+            # Clamp numerically to [0, 1]
+            if x_next[i] > 1.0 + 1e-9:
+                x_next[i] = x[i] - delta
+                step_sign = -1.0
+            else:
+                step_sign = 1.0
+            x_real_next = lows + span * x_next
+            f_next = float(
+                np.asarray(predict(x_real_next.reshape(1, -1)), dtype=float).ravel()[0]
+            )
+            # Elementary effect in original units: divide by physical step.
+            physical_delta = span[i] * delta * step_sign
+            if abs(physical_delta) < 1e-15:
+                effects[r, i] = 0.0
+            else:
+                effects[r, i] = (f_next - f_curr) / physical_delta
+            x = x_next
+            f_curr = f_next
+
+    mu = effects.mean(axis=0)
+    mu_star = np.abs(effects).mean(axis=0)
+    if n_trajectories == 1:
+        sigma = np.zeros(n_features, dtype=float)
+    else:
+        sigma = effects.std(axis=0, ddof=1)
+
+    return {
+        "mu": mu,
+        "mu_star": mu_star,
+        "sigma": sigma,
+        "n_trajectories": n_trajectories,
+        "n_levels": n_levels,
+    }
+
+
+def morris_elementary_effects(predict, X, n_trajectories=20, n_levels=4, seed=None):
+    """Alias for :func:`morris_screening`."""
+    return morris_screening(
+        predict, X, n_trajectories=n_trajectories, n_levels=n_levels, seed=seed
+    )
 

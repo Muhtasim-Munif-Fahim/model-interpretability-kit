@@ -1,7 +1,7 @@
 """Command-line interface for the interpretability toolkit.
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
-expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``pdp``,
+expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``morris``, ``pdp``,
 ``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
@@ -15,7 +15,7 @@ from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
-from .importance import loco_importance, permutation_importance, sobol_first_order
+from .importance import loco_importance, morris_screening, permutation_importance, sobol_first_order
 from .local import kernel_shap, lime_explain
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
@@ -83,6 +83,10 @@ def build_parser():
 
     p_sobol = sub.add_parser("sobol", help="Sobol first-order sensitivity indices")
     p_sobol.add_argument("--n-samples", type=int, default=512, help="Saltelli sample size N")
+
+    p_morris = sub.add_parser("morris", help="Morris elementary-effects screening")
+    p_morris.add_argument("--n-trajectories", type=int, default=20, help="number of Morris trajectories")
+    p_morris.add_argument("--n-levels", type=int, default=4, help="even number of grid levels")
 
     p_report = sub.add_parser("report", help="write a markdown report")
     p_report.add_argument("--out", default="demo_report.md")
@@ -309,6 +313,32 @@ def _cmd_sobol(args):
     return 0
 
 
+
+
+def _cmd_morris(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    result = morris_screening(
+        model.predict,
+        X,
+        n_trajectories=args.n_trajectories,
+        n_levels=args.n_levels,
+        seed=args.seed,
+    )
+    order = np.argsort(-result["mu_star"])
+    print(
+        "Morris screening (r = %d, p = %d):"
+        % (result["n_trajectories"], result["n_levels"])
+    )
+    print("  %-6s %10s %10s %10s" % ("feat", "mu*", "mu", "sigma"))
+    for j in order:
+        print(
+            "  %-6s %10.4f %10.4f %10.4f"
+            % (names[j], result["mu_star"][j], result["mu"][j], result["sigma"][j])
+        )
+    return 0
+
+
 def _cmd_kernel_shap(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -405,6 +435,8 @@ def main(argv=None):
         return _cmd_kernel_shap(args)
     if args.command == "sobol":
         return _cmd_sobol(args)
+    if args.command == "morris":
+        return _cmd_morris(args)
     if args.command == "report":
         return _cmd_report(args)
     return 0
