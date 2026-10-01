@@ -1,7 +1,7 @@
 """Command-line interface for the interpretability toolkit.
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
-expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``morris``, ``pdp``,
+expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
 ``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
@@ -15,7 +15,7 @@ from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
-from .importance import loco_importance, morris_screening, permutation_importance, sobol_first_order
+from .importance import loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
 from .local import kernel_shap, lime_explain
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
@@ -83,6 +83,9 @@ def build_parser():
 
     p_sobol = sub.add_parser("sobol", help="Sobol first-order sensitivity indices")
     p_sobol.add_argument("--n-samples", type=int, default=512, help="Saltelli sample size N")
+
+    p_sobol_total = sub.add_parser("sobol-total", help="Sobol total-order sensitivity indices")
+    p_sobol_total.add_argument("--n-samples", type=int, default=512, help="Saltelli sample size N")
 
     p_morris = sub.add_parser("morris", help="Morris elementary-effects screening")
     p_morris.add_argument("--n-trajectories", type=int, default=20, help="number of Morris trajectories")
@@ -315,6 +318,24 @@ def _cmd_sobol(args):
 
 
 
+
+def _cmd_sobol_total(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    result = sobol_total_order(
+        model.predict, X, n_samples=args.n_samples, seed=args.seed
+    )
+    order = np.argsort(-result["ST"])
+    print(
+        "Sobol total-order indices (Var(f) = %.4f, N = %d):"
+        % (result["variance"], result["n_samples"])
+    )
+    print("  %-6s %10s %10s" % ("feat", "ST", "S1"))
+    for j in order:
+        print("  %-6s %10.4f %10.4f" % (names[j], result["ST"][j], result["S1"][j]))
+    return 0
+
+
 def _cmd_morris(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -435,6 +456,8 @@ def main(argv=None):
         return _cmd_kernel_shap(args)
     if args.command == "sobol":
         return _cmd_sobol(args)
+    if args.command == "sobol-total":
+        return _cmd_sobol_total(args)
     if args.command == "morris":
         return _cmd_morris(args)
     if args.command == "report":
