@@ -21,6 +21,7 @@ __all__ = [
     "drop_column_importance",
     "loco_importance",
     "sobol_first_order",
+    "sobol_total_order",
     "morris_screening",
     "morris_elementary_effects",
 ]
@@ -442,6 +443,88 @@ def sobol_first_order(predict, X, n_samples=512, seed=None):
 
     return {"S1": S1, "variance": variance, "n_samples": n_samples}
 
+
+
+
+def sobol_total_order(predict, X, n_samples=512, seed=None):
+    """Sobol total-order sensitivity indices via Saltelli / pick-freeze sampling.
+
+    Draws two independent design matrices ``A`` and ``B`` uniformly inside the
+    axis-aligned box spanned by the training features ``X``. For each feature
+    ``i`` forms the pick-freeze matrix ``A_B^(i)`` (all columns from ``A``
+    except column ``i`` taken from ``B``) and estimates the total-order Sobol
+    index with Jansen's formula
+
+    ``ST_i = (1/(2N)) sum_j (f(A)_j - f(A_B^(i))_j)^2  /  Var(Y)``,
+
+    which equals ``1 - Var(E[Y | X_~i]) / Var(Y)``. Indices are clipped to
+    ``[0, 1]``. Features that do not affect ``predict`` (alone or through
+    interactions) receive near-zero ``ST``; additive main effects recover
+    approximately the same values as :func:`sobol_first_order`, while
+    interaction-heavy features have ``ST > S1``.
+
+    For convenience the return dict also includes first-order ``S1`` indices
+    estimated from the same Saltelli matrices (Jansen first-order formula).
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y`` with ``y`` shape ``(n,)``.
+    X : array-like of shape (n_rows, n_features)
+        Training (or background) data used only to set per-feature ranges.
+    n_samples : int
+        Saltelli sample size ``N`` (number of rows in ``A`` / ``B``).
+    seed : int, optional
+        RNG seed for the uniform draws.
+
+    Returns
+    -------
+    dict
+        ``{"ST": ndarray (n_features,), "S1": ndarray (n_features,),
+        "variance": float, "n_samples": int}``.
+    """
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2:
+        raise ValueError("X must be a 2d array")
+    n_features = X.shape[1]
+    if n_features < 1:
+        raise ValueError("X must have at least one feature")
+    if isinstance(n_samples, bool) or not isinstance(n_samples, (int, np.integer)) or n_samples < 2:
+        raise ValueError("n_samples must be an integer >= 2")
+    n_samples = int(n_samples)
+
+    lows, highs = _feature_bounds(X)
+    rng = np.random.default_rng(seed)
+    span = highs - lows
+    A = lows + span * rng.random((n_samples, n_features))
+    B = lows + span * rng.random((n_samples, n_features))
+
+    f_A = np.asarray(predict(A), dtype=float).ravel()
+    f_B = np.asarray(predict(B), dtype=float).ravel()
+    if f_A.shape[0] != n_samples or f_B.shape[0] != n_samples:
+        raise ValueError("predict must return one value per row")
+    variance = float(np.var(np.concatenate([f_A, f_B]), ddof=0))
+    ST = np.zeros(n_features, dtype=float)
+    S1 = np.zeros(n_features, dtype=float)
+    if variance <= 0.0 or not np.isfinite(variance):
+        return {"ST": ST, "S1": S1, "variance": variance, "n_samples": n_samples}
+
+    for i in range(n_features):
+        AB_i = A.copy()
+        AB_i[:, i] = B[:, i]
+        f_ABi = np.asarray(predict(AB_i), dtype=float).ravel()
+        if f_ABi.shape[0] != n_samples:
+            raise ValueError("predict must return one value per row")
+        # Jansen (1999) total-order estimator:
+        # ST_i = (1/(2N)) sum (f(A) - f(A_B^(i)))^2 / V
+        st = (0.5 / n_samples) * np.sum((f_A - f_ABi) ** 2) / variance
+        ST[i] = float(np.clip(st, 0.0, 1.0))
+        # Jansen first-order (same matrices) for convenience:
+        # S1_i = 1 - (1/(2N)) sum (f(B) - f(A_B^(i)))^2 / V
+        s1 = 1.0 - (0.5 / n_samples) * np.sum((f_B - f_ABi) ** 2) / variance
+        S1[i] = float(np.clip(s1, 0.0, 1.0))
+
+    return {"ST": ST, "S1": S1, "variance": variance, "n_samples": n_samples}
 
 
 def morris_screening(

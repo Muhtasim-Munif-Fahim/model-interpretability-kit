@@ -22,6 +22,7 @@ truth is known, so every explanation can be checked against reality.
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
 | Kernel SHAP-lite | Model-agnostic Shapley values via coalition sampling + Shapley-kernel WLS | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee (NeurIPS, 2017) |
 | Sobol first-order | Fraction of output variance explained by each feature alone (Saltelli / pick-freeze) | `S1` per feature in `[0, 1]` | Sobol (1993); Saltelli et al., "Global Sensitivity Analysis" (2008) |
+| Sobol total-order | Fraction of variance from a feature and all its interactions (`1 - Var(E[Y|X_~i])/Var(Y)`) | `ST` (and optional `S1`) per feature in `[0, 1]` | Sobol (1993); Jansen / Saltelli pick-freeze |
 | Faithfulness checks | Local surrogate R2; top-feature overlap between local and global attributions | per-instance numbers | Molnar, "Interpretable Machine Learning" (2022) |
 
 The broader conceptual framework and caveats are described in Christoph
