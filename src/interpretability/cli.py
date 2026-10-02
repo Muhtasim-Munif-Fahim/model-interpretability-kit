@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``integrated-gradients`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -16,7 +16,7 @@ from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
-from .local import kernel_shap, lime_explain
+from .local import integrated_gradients, kernel_shap, lime_explain
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
 
@@ -80,6 +80,10 @@ def build_parser():
     p_kshap = sub.add_parser("kernel-shap", help="Kernel SHAP-lite local attributions")
     p_kshap.add_argument("--rows", default="0,1", help="comma-separated row indices")
     p_kshap.add_argument("--n-samples", type=int, default=200, help="coalition samples per row")
+
+    p_ig = sub.add_parser("integrated-gradients", help="Integrated Gradients local attributions")
+    p_ig.add_argument("--rows", default="0,1", help="comma-separated row indices")
+    p_ig.add_argument("--n-steps", type=int, default=32, help="Riemann-sum path steps")
 
     p_sobol = sub.add_parser("sobol", help="Sobol first-order sensitivity indices")
     p_sobol.add_argument("--n-samples", type=int, default=512, help="Saltelli sample size N")
@@ -388,6 +392,34 @@ def _cmd_kernel_shap(args):
     return 0
 
 
+
+def _cmd_integrated_gradients(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    rows = _parse_indices(args.rows, "rows")
+    baseline = X.mean(axis=0)
+    for i in rows:
+        if i < 0 or i >= X.shape[0]:
+            sys.exit("row index %d out of range" % i)
+        result = integrated_gradients(
+            model.predict,
+            X[i],
+            baseline=baseline,
+            n_steps=args.n_steps,
+            feature_names=names,
+        )
+        print(
+            "Integrated Gradients for row %d (prediction %.4f, baseline %.4f):"
+            % (i, result["prediction"], result["baseline"])
+        )
+        for j, val in enumerate(result["values"]):
+            print("  %-6s %8.4f" % (names[j], val))
+        print(
+            "  sum(phi)=%.4f  f(x)-baseline=%.4f"
+            % (float(np.sum(result["values"])), result["prediction"] - result["baseline"])
+        )
+    return 0
+
 def _cmd_report(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -454,6 +486,8 @@ def main(argv=None):
         return _cmd_explain(args)
     if args.command == "kernel-shap":
         return _cmd_kernel_shap(args)
+    if args.command == "integrated-gradients":
+        return _cmd_integrated_gradients(args)
     if args.command == "sobol":
         return _cmd_sobol(args)
     if args.command == "sobol-total":
