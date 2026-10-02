@@ -21,6 +21,7 @@ truth is known, so every explanation can be checked against reality.
 | LIME-style surrogate | Locally weighted linear fit around an instance | feature weights + intercept + local R2 | Ribeiro, Singh & Guestrin, "Why Should I Trust You?" (KDD, 2016) |
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
 | Kernel SHAP-lite | Model-agnostic Shapley values via coalition sampling + Shapley-kernel WLS | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee (NeurIPS, 2017) |
+| Integrated Gradients | Path-integral of gradients from baseline→input (Riemann / finite-diff) | per-feature attributions summing to `f(x)-f(baseline)` | Sundararajan, Taly & Yan (ICML, 2017) |
 | Sobol first-order | Fraction of output variance explained by each feature alone (Saltelli / pick-freeze) | `S1` per feature in `[0, 1]` | Sobol (1993); Saltelli et al., "Global Sensitivity Analysis" (2008) |
 | Sobol total-order | Fraction of variance from a feature and all its interactions (`1 - Var(E[Y|X_~i])/Var(Y)`) | `ST` (and optional `S1`) per feature in `[0, 1]` | Sobol (1993); Jansen / Saltelli pick-freeze |
 | Faithfulness checks | Local surrogate R2; top-feature overlap between local and global attributions | per-instance numbers | Molnar, "Interpretable Machine Learning" (2022) |
@@ -98,7 +99,7 @@ from interpretability.importance import loco_importance, permutation_importance
 from interpretability.local import lime_explain
 from interpretability.interaction import friedman_h_statistic
 from interpretability.partial_dependence import ice_curves, partial_dependence
-from interpretability.local import kernel_shap
+from interpretability.local import integrated_gradients, kernel_shap
 
 X, y, names = make_synthetic_data(n_samples=300, seed=42)
 model = fit_decision_tree(X[:200], y[:200], max_depth=6, min_samples_leaf=5)
@@ -133,6 +134,10 @@ print(ice["grid"], ice["curves"].shape)
 ks = kernel_shap(model.predict, X[200], X[200:], n_samples=256, seed=0)
 print(ks["values"], ks["baseline"], ks["prediction"])
 
+# Local: Integrated Gradients from mean baseline
+ig = integrated_gradients(model.predict, X[200], baseline=X[200:].mean(axis=0), n_steps=32)
+print(ig["values"], ig["values"].sum(), ig["prediction"] - ig["baseline"])
+
 
 # Pairwise interaction strength (Friedman H)
 h = friedman_h_statistic(model.predict, X[200:], (0, 1), grid_points=15)
@@ -152,6 +157,7 @@ python -m interpretability.cli --seed 42 pdp --features 0,2
 python -m interpretability.cli --seed 42 pdp --features 0 --conf-level 0.95
 python -m interpretability.cli --seed 42 ice --features 0 --rows 0,1,2 --centered
 python -m interpretability.cli --seed 42 kernel-shap --rows 0,1 --n-samples 200
+python -m interpretability.cli --seed 42 integrated-gradients --rows 0,1 --n-steps 32
 python -m interpretability.cli --seed 42 ale --features 0
 python -m interpretability.cli --seed 42 ale --features 0,2
 python -m interpretability.cli --seed 42 explain --rows 0,1

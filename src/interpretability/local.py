@@ -1,5 +1,9 @@
 """Local explanations: LIME-style surrogates, Kernel SHAP, and tree attributions.
 
+``integrated_gradients`` attributes a prediction along the straight-line
+path from a baseline to the instance via a Riemann sum of finite-difference
+gradients (Sundararajan, Taly & Yan, 2017).
+
 ``lime_explain`` fits a weighted linear surrogate over a random neighborhood
 of the instance to be explained, so the explanation is interpretable at the
 cost of locality.
@@ -34,6 +38,7 @@ __all__ = [
     "local_occlusion_attribution",
     "kernel_shap",
     "shapley_kernel_weight",
+    "integrated_gradients",
 ]
 
 
@@ -447,5 +452,97 @@ def kernel_shap(
         "feature_names": list(feature_names),
         "weighted_r2": _weighted_r2(y, fitted, weights),
         "background_mean_prediction": float(baseline_pred),
+    }
+
+
+def integrated_gradients(
+    predict,
+    x_row,
+    baseline=None,
+    n_steps=32,
+    eps=1e-4,
+    feature_names=None,
+):
+    """Integrated Gradients attributions via a Riemann-sum path integral.
+
+    Approximates the path integral of the model's gradient from a baseline
+    ``x'`` to the instance ``x`` (Sundararajan, Taly & Yan, ICML 2017):
+
+    ``IG_i(x) = (x_i - x'_i) * (1/m) * sum_{k=1}^{m} ∂f(x' + (k/m)(x-x')) / ∂x_i``
+
+    Gradients are estimated with central finite differences of step ``eps``
+    so the estimator works for any black-box ``predict``. By the
+    completeness axiom the attributions sum (approximately) to
+    ``f(x) - f(baseline)``.
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y_pred`` for a 2-D ``X``.
+    x_row : sequence of float
+        Instance to explain.
+    baseline : sequence of float or None
+        Reference input. Defaults to the zero vector with the same width
+        as ``x_row``.
+    n_steps : int
+        Number of Riemann-sum steps along the path (``m`` above).
+    eps : float
+        Central finite-difference step size for each partial derivative.
+    feature_names : list of str or None
+
+    Returns
+    -------
+    dict
+        ``{"values": ndarray, "baseline": float, "prediction": float,
+        "baseline_input": ndarray, "n_steps": int, "feature_names": list}``.
+        ``values`` sum (approximately) to ``prediction - baseline``.
+    """
+    x_row = np.asarray(x_row, dtype=float).ravel()
+    m = x_row.shape[0]
+    if m < 1:
+        raise ValueError("x_row must have at least one feature")
+    if baseline is None:
+        baseline_input = np.zeros(m, dtype=float)
+    else:
+        baseline_input = np.asarray(baseline, dtype=float).ravel()
+        if baseline_input.shape[0] != m:
+            raise ValueError("baseline and x_row must have the same number of features")
+    if int(n_steps) < 1:
+        raise ValueError("n_steps must be at least 1")
+    n_steps = int(n_steps)
+    if not (isinstance(eps, (int, float)) and float(eps) > 0.0):
+        raise ValueError("eps must be a positive number")
+    eps = float(eps)
+
+    prediction = float(predict(x_row[None, :])[0])
+    baseline_pred = float(predict(baseline_input[None, :])[0])
+    delta = x_row - baseline_input
+
+    # Riemann sum at interior points alpha = k/m for k=1..m.
+    grads = np.zeros(m, dtype=float)
+    for k in range(1, n_steps + 1):
+        alpha = k / float(n_steps)
+        point = baseline_input + alpha * delta
+        for j in range(m):
+            e = np.zeros(m, dtype=float)
+            e[j] = eps
+            f_plus = float(predict((point + e)[None, :])[0])
+            f_minus = float(predict((point - e)[None, :])[0])
+            grads[j] += (f_plus - f_minus) / (2.0 * eps)
+    avg_grad = grads / float(n_steps)
+    values = delta * avg_grad
+
+    if feature_names is None:
+        feature_names = ["X%d" % j for j in range(m)]
+    elif len(feature_names) != m:
+        raise ValueError("feature_names must match the number of features")
+
+    return {
+        "values": np.asarray(values, dtype=float),
+        "baseline": float(baseline_pred),
+        "prediction": prediction,
+        "baseline_input": np.asarray(baseline_input, dtype=float),
+        "n_steps": n_steps,
+        "feature_names": list(feature_names),
     }
 
