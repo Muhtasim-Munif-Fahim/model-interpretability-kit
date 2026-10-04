@@ -4,6 +4,9 @@
 path from a baseline to the instance via a Riemann sum of finite-difference
 gradients (Sundararajan, Taly & Yan, 2017).
 
+``smoothgrad`` averages finite-difference gradients over Gaussian-noised
+copies of the input to denoise saliency maps (Smilkov et al., 2017).
+
 ``lime_explain`` fits a weighted linear surrogate over a random neighborhood
 of the instance to be explained, so the explanation is interpretable at the
 cost of locality.
@@ -39,6 +42,7 @@ __all__ = [
     "kernel_shap",
     "shapley_kernel_weight",
     "integrated_gradients",
+    "smoothgrad",
 ]
 
 
@@ -546,3 +550,87 @@ def integrated_gradients(
         "feature_names": list(feature_names),
     }
 
+
+def smoothgrad(
+    predict,
+    x_row,
+    n_samples=50,
+    noise_sigma=0.1,
+    eps=1e-4,
+    seed=None,
+    feature_names=None,
+):
+    """SmoothGrad attributions via averaged noisy finite-difference gradients.
+
+    Estimates the gradient of ``f`` at ``x`` with central finite differences,
+    then averages those gradients over ``n_samples`` Gaussian-noised copies
+    ``x + N(0, σ² I)`` (Smilkov et al., "SmoothGrad: removing noise by adding
+    noise", 2017). Averaging denoises saliency without requiring a path
+    integral (contrast Integrated Gradients).
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y_pred`` for a 2-D ``X``.
+    x_row : sequence of float
+        Instance to explain.
+    n_samples : int
+        Number of noisy copies to average over.
+    noise_sigma : float
+        Standard deviation of the isotropic Gaussian noise added to ``x``.
+        When ``noise_sigma == 0`` the result is the raw central finite-
+        difference gradient at ``x``.
+    eps : float
+        Central finite-difference step size for each partial derivative.
+    seed : int or None
+        Random seed for the noise draws.
+    feature_names : list of str or None
+
+    Returns
+    -------
+    dict
+        ``{"values": ndarray, "prediction": float, "n_samples": int,
+        "noise_sigma": float, "feature_names": list}``.
+    """
+    x_row = np.asarray(x_row, dtype=float).ravel()
+    m = x_row.shape[0]
+    if m < 1:
+        raise ValueError("x_row must have at least one feature")
+    if int(n_samples) < 1:
+        raise ValueError("n_samples must be at least 1")
+    n_samples = int(n_samples)
+    if not (isinstance(noise_sigma, (int, float)) and float(noise_sigma) >= 0.0):
+        raise ValueError("noise_sigma must be a non-negative number")
+    noise_sigma = float(noise_sigma)
+    if not (isinstance(eps, (int, float)) and float(eps) > 0.0):
+        raise ValueError("eps must be a positive number")
+    eps = float(eps)
+
+    prediction = float(predict(x_row[None, :])[0])
+    rng = np.random.default_rng(seed)
+    grads = np.zeros(m, dtype=float)
+    for _ in range(n_samples):
+        if noise_sigma == 0.0:
+            point = x_row.copy()
+        else:
+            point = x_row + rng.normal(0.0, noise_sigma, size=m)
+        for j in range(m):
+            e = np.zeros(m, dtype=float)
+            e[j] = eps
+            f_plus = float(predict((point + e)[None, :])[0])
+            f_minus = float(predict((point - e)[None, :])[0])
+            grads[j] += (f_plus - f_minus) / (2.0 * eps)
+    values = grads / float(n_samples)
+
+    if feature_names is None:
+        feature_names = ["X%d" % j for j in range(m)]
+    elif len(feature_names) != m:
+        raise ValueError("feature_names must match the number of features")
+
+    return {
+        "values": np.asarray(values, dtype=float),
+        "prediction": prediction,
+        "n_samples": n_samples,
+        "noise_sigma": noise_sigma,
+        "feature_names": list(feature_names),
+    }

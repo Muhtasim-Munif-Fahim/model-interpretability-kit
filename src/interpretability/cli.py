@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``integrated-gradients`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``integrated-gradients``, ``smoothgrad`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -16,7 +16,7 @@ from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
-from .local import integrated_gradients, kernel_shap, lime_explain
+from .local import integrated_gradients, kernel_shap, lime_explain, smoothgrad
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
 
@@ -84,6 +84,11 @@ def build_parser():
     p_ig = sub.add_parser("integrated-gradients", help="Integrated Gradients local attributions")
     p_ig.add_argument("--rows", default="0,1", help="comma-separated row indices")
     p_ig.add_argument("--n-steps", type=int, default=32, help="Riemann-sum path steps")
+
+    p_sg = sub.add_parser("smoothgrad", help="SmoothGrad local attributions")
+    p_sg.add_argument("--rows", default="0,1", help="comma-separated row indices")
+    p_sg.add_argument("--n-samples", type=int, default=50, help="noisy copies to average")
+    p_sg.add_argument("--noise-sigma", type=float, default=0.1, help="Gaussian noise std")
 
     p_sobol = sub.add_parser("sobol", help="Sobol first-order sensitivity indices")
     p_sobol.add_argument("--n-samples", type=int, default=512, help="Saltelli sample size N")
@@ -420,6 +425,30 @@ def _cmd_integrated_gradients(args):
         )
     return 0
 
+
+def _cmd_smoothgrad(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    rows = _parse_indices(args.rows, "rows")
+    for i in rows:
+        if i < 0 or i >= X.shape[0]:
+            sys.exit("row index %d out of range" % i)
+        result = smoothgrad(
+            model.predict,
+            X[i],
+            n_samples=args.n_samples,
+            noise_sigma=args.noise_sigma,
+            seed=args.seed,
+            feature_names=names,
+        )
+        print(
+            "SmoothGrad for row %d (prediction %.4f, n_samples %d, sigma %.4f):"
+            % (i, result["prediction"], result["n_samples"], result["noise_sigma"])
+        )
+        for j, val in enumerate(result["values"]):
+            print("  %-6s %8.4f" % (names[j], val))
+    return 0
+
 def _cmd_report(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -488,6 +517,8 @@ def main(argv=None):
         return _cmd_kernel_shap(args)
     if args.command == "integrated-gradients":
         return _cmd_integrated_gradients(args)
+    if args.command == "smoothgrad":
+        return _cmd_smoothgrad(args)
     if args.command == "sobol":
         return _cmd_sobol(args)
     if args.command == "sobol-total":
