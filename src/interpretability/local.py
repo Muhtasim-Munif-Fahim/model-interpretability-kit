@@ -7,6 +7,10 @@ gradients (Sundararajan, Taly & Yan, 2017).
 ``smoothgrad`` averages finite-difference gradients over Gaussian-noised
 copies of the input to denoise saliency maps (Smilkov et al., 2017).
 
+``sampling_shapley`` estimates interventional Shapley values by averaging
+marginal contributions over random feature permutations and background rows
+(Štrumbelj & Kononenko, 2014), with optional antithetic permutations.
+
 ``lime_explain`` fits a weighted linear surrogate over a random neighborhood
 of the instance to be explained, so the explanation is interpretable at the
 cost of locality.
@@ -43,6 +47,7 @@ __all__ = [
     "shapley_kernel_weight",
     "integrated_gradients",
     "smoothgrad",
+    "sampling_shapley",
 ]
 
 
@@ -632,5 +637,122 @@ def smoothgrad(
         "prediction": prediction,
         "n_samples": n_samples,
         "noise_sigma": noise_sigma,
+        "feature_names": list(feature_names),
+    }
+
+
+def sampling_shapley(
+    predict,
+    x_row,
+    background,
+    n_permutations=100,
+    antithetic=True,
+    seed=None,
+    feature_names=None,
+):
+    """Permutation-sampling Shapley values (Štrumbelj & Kononenko, 2014).
+
+    Monte Carlo estimate of interventional Shapley values for one instance.
+    Each draw pairs a random feature permutation ``π`` with a random
+    background row ``z``, walks from ``z`` to ``x_row`` by switching features
+    to their instance values in the order ``π``, and credits each feature
+    with the change in prediction at its switch:
+
+    ``φ_j += f(x_{Pre(j) ∪ {j}}, z_rest) - f(x_{Pre(j)}, z_rest)``.
+
+    Unlike :func:`kernel_shap` (which mean-imputes absent features), absent
+    features keep the values of a real background row, so the estimator is
+    unbiased for the interventional value function
+    ``v(S) = E_z[f(x_S, z_~S)]`` and handles non-linear models correctly.
+    Every walk telescopes, so ``sum(values) == prediction - baseline`` holds
+    *exactly* where ``baseline`` is the mean prediction over the sampled
+    background rows. With ``antithetic=True`` each permutation is also used
+    reversed with the same background row (Mitchell et al., 2022), which
+    cancels much of the variance for near-additive models.
+
+    All model calls are batched into a single ``predict`` invocation of
+    ``n_draws * (n_features + 1)`` rows.
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y_pred`` for a 2-D ``X``.
+    x_row : sequence of float
+        Instance to explain.
+    background : ndarray
+        Reference rows that supply the values of "absent" features.
+    n_permutations : int
+        Number of (permutation, background row) draws. With antithetic
+        sampling each draw contributes two walks.
+    antithetic : bool
+        Also evaluate each permutation in reverse order.
+    seed : int or None
+    feature_names : list of str or None
+
+    Returns
+    -------
+    dict
+        ``{"values": ndarray, "std_error": ndarray, "baseline": float,
+        "prediction": float, "n_permutations": int, "n_evaluations": int,
+        "feature_names": list}``. ``std_error`` is the Monte Carlo standard
+        error of each value (antithetic pairs count as one draw).
+    """
+    x_row = np.asarray(x_row, dtype=float).ravel()
+    background = as_2d(background, name="background")
+    m = background.shape[1]
+    if x_row.shape[0] != m:
+        raise ValueError("x_row and background must have the same number of features")
+    if background.shape[0] < 1:
+        raise ValueError("background must contain at least one row")
+    if isinstance(n_permutations, bool) or int(n_permutations) != n_permutations:
+        raise ValueError("n_permutations must be a positive integer")
+    n_permutations = int(n_permutations)
+    if n_permutations < 1:
+        raise ValueError("n_permutations must be a positive integer")
+    if feature_names is None:
+        feature_names = ["X%d" % j for j in range(m)]
+    elif len(feature_names) != m:
+        raise ValueError("feature_names must have one entry per feature")
+
+    rng = np.random.default_rng(seed)
+    perms = np.array([rng.permutation(m) for _ in range(n_permutations)], dtype=int)
+    rows = rng.integers(0, background.shape[0], size=n_permutations)
+    if antithetic:
+        perms = np.vstack([perms, perms[:, ::-1]])
+        rows = np.concatenate([rows, rows])
+    n_walks = perms.shape[0]
+
+    # walks[w, k] is the point after switching the first k features of perm w.
+    walks = np.repeat(background[rows][:, None, :], m + 1, axis=1)
+    for w in range(n_walks):
+        for k, feat in enumerate(perms[w], start=1):
+            walks[w, k:, feat] = x_row[feat]
+    preds = np.asarray(predict(walks.reshape(-1, m)), dtype=float).ravel()
+    if preds.shape[0] != n_walks * (m + 1):
+        raise ValueError("predict must return one value per input row")
+    preds = preds.reshape(n_walks, m + 1)
+
+    deltas = np.diff(preds, axis=1)  # deltas[w, k] belongs to feature perms[w, k]
+    contrib = np.zeros((n_walks, m), dtype=float)
+    contrib[np.arange(n_walks)[:, None], perms] = deltas
+    if antithetic:
+        contrib = 0.5 * (contrib[:n_permutations] + contrib[n_permutations:])
+        start = preds[:n_permutations, 0]
+    else:
+        start = preds[:, 0]
+
+    values = contrib.mean(axis=0)
+    if contrib.shape[0] > 1:
+        std_error = contrib.std(axis=0, ddof=1) / np.sqrt(contrib.shape[0])
+    else:
+        std_error = np.full(m, np.nan)
+    prediction = float(preds[0, -1])
+    return {
+        "values": values,
+        "std_error": std_error,
+        "baseline": float(np.mean(start)),
+        "prediction": prediction,
+        "n_permutations": n_permutations,
+        "n_evaluations": int(preds.size),
         "feature_names": list(feature_names),
     }

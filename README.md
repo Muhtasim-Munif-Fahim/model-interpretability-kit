@@ -21,6 +21,7 @@ truth is known, so every explanation can be checked against reality.
 | LIME-style surrogate | Locally weighted linear fit around an instance | feature weights + intercept + local R2 | Ribeiro, Singh & Guestrin, "Why Should I Trust You?" (KDD, 2016) |
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
 | Kernel SHAP-lite | Model-agnostic Shapley values via coalition sampling + Shapley-kernel WLS | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee (NeurIPS, 2017) |
+| Permutation-sampling Shapley | Monte Carlo interventional Shapley values: average marginal contributions over random feature orderings, with absent features taken from real background rows; optional antithetic (reversed) permutations | per-feature attributions summing exactly to `prediction - baseline`, plus Monte Carlo standard errors | Štrumbelj & Kononenko, "Explaining prediction models and individual predictions with feature contributions" (KAIS, 2014); Mitchell et al., "Sampling Permutations for Shapley Value Estimation" (JMLR, 2022) |
 | Integrated Gradients | Path-integral of gradients from baseline→input (Riemann / finite-diff) | per-feature attributions summing to `f(x)-f(baseline)` | Sundararajan, Taly & Yan (ICML, 2017) |
 | SmoothGrad | Average finite-difference gradients over Gaussian-noised copies of the input | per-feature smoothed saliency | Smilkov et al., "SmoothGrad: removing noise by adding noise" (2017) |
 | Sobol first-order | Fraction of output variance explained by each feature alone (Saltelli / pick-freeze) | `S1` per feature in `[0, 1]` | Sobol (1993); Saltelli et al., "Global Sensitivity Analysis" (2008) |
@@ -100,7 +101,7 @@ from interpretability.importance import loco_importance, permutation_importance
 from interpretability.local import lime_explain
 from interpretability.interaction import friedman_h_statistic
 from interpretability.partial_dependence import ice_curves, partial_dependence
-from interpretability.local import integrated_gradients, kernel_shap, smoothgrad
+from interpretability.local import integrated_gradients, kernel_shap, sampling_shapley, smoothgrad
 
 X, y, names = make_synthetic_data(n_samples=300, seed=42)
 model = fit_decision_tree(X[:200], y[:200], max_depth=6, min_samples_leaf=5)
@@ -135,6 +136,10 @@ print(ice["grid"], ice["curves"].shape)
 ks = kernel_shap(model.predict, X[200], X[200:], n_samples=256, seed=0)
 print(ks["values"], ks["baseline"], ks["prediction"])
 
+# Local: permutation-sampling Shapley (interventional, exact efficiency, with SEs)
+ss = sampling_shapley(model.predict, X[200], X[200:], n_permutations=200, seed=0)
+print(ss["values"], ss["std_error"], ss["values"].sum(), ss["prediction"] - ss["baseline"])
+
 # Local: Integrated Gradients from mean baseline
 ig = integrated_gradients(model.predict, X[200], baseline=X[200:].mean(axis=0), n_steps=32)
 print(ig["values"], ig["values"].sum(), ig["prediction"] - ig["baseline"])
@@ -162,6 +167,7 @@ python -m interpretability.cli --seed 42 pdp --features 0,2
 python -m interpretability.cli --seed 42 pdp --features 0 --conf-level 0.95
 python -m interpretability.cli --seed 42 ice --features 0 --rows 0,1,2 --centered
 python -m interpretability.cli --seed 42 kernel-shap --rows 0,1 --n-samples 200
+python -m interpretability.cli --seed 42 sampling-shapley --rows 0,1 --n-permutations 100
 python -m interpretability.cli --seed 42 integrated-gradients --rows 0,1 --n-steps 32
 python -m interpretability.cli --seed 42 smoothgrad --rows 0,1 --n-samples 50 --noise-sigma 0.1
 python -m interpretability.cli --seed 42 ale --features 0
