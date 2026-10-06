@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``integrated-gradients``, ``smoothgrad`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -16,7 +16,7 @@ from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
-from .local import integrated_gradients, kernel_shap, lime_explain, smoothgrad
+from .local import integrated_gradients, kernel_shap, lime_explain, sampling_shapley, smoothgrad
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
 
@@ -80,6 +80,17 @@ def build_parser():
     p_kshap = sub.add_parser("kernel-shap", help="Kernel SHAP-lite local attributions")
     p_kshap.add_argument("--rows", default="0,1", help="comma-separated row indices")
     p_kshap.add_argument("--n-samples", type=int, default=200, help="coalition samples per row")
+
+    p_ss = sub.add_parser(
+        "sampling-shapley", help="permutation-sampling Shapley local attributions"
+    )
+    p_ss.add_argument("--rows", default="0,1", help="comma-separated row indices")
+    p_ss.add_argument(
+        "--n-permutations", type=int, default=100, help="permutation draws per row"
+    )
+    p_ss.add_argument(
+        "--no-antithetic", action="store_true", help="disable antithetic (reversed) permutations"
+    )
 
     p_ig = sub.add_parser("integrated-gradients", help="Integrated Gradients local attributions")
     p_ig.add_argument("--rows", default="0,1", help="comma-separated row indices")
@@ -398,6 +409,35 @@ def _cmd_kernel_shap(args):
 
 
 
+def _cmd_sampling_shapley(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    rows = _parse_indices(args.rows, "rows")
+    for i in rows:
+        if i < 0 or i >= X.shape[0]:
+            sys.exit("row index %d out of range" % i)
+        result = sampling_shapley(
+            model.predict,
+            X[i],
+            X,
+            n_permutations=args.n_permutations,
+            antithetic=not args.no_antithetic,
+            seed=args.seed,
+            feature_names=names,
+        )
+        print(
+            "Sampling Shapley for row %d (prediction %.4f, baseline %.4f, %d permutations):"
+            % (i, result["prediction"], result["baseline"], result["n_permutations"])
+        )
+        for j, val in enumerate(result["values"]):
+            print("  %-6s %8.4f  (se %.4f)" % (names[j], val, result["std_error"][j]))
+        print(
+            "  sum(phi)=%.4f  f(x)-baseline=%.4f"
+            % (float(np.sum(result["values"])), result["prediction"] - result["baseline"])
+        )
+    return 0
+
+
 def _cmd_integrated_gradients(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -515,6 +555,8 @@ def main(argv=None):
         return _cmd_explain(args)
     if args.command == "kernel-shap":
         return _cmd_kernel_shap(args)
+    if args.command == "sampling-shapley":
+        return _cmd_sampling_shapley(args)
     if args.command == "integrated-gradients":
         return _cmd_integrated_gradients(args)
     if args.command == "smoothgrad":

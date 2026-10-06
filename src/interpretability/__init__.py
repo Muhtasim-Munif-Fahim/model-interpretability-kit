@@ -7,7 +7,7 @@ plain callable ``predict(X) -> y``:
 * ``partial_dependence``: 1-D/2-D partial dependence plots and ICE curves
 * ``ale``: 1-D/2-D accumulated local effects curves and interaction surfaces
 * ``interaction``: Friedman H-statistic for pairwise interaction strength
-* ``local``: LIME-style surrogates, Kernel SHAP-lite, Integrated Gradients, SmoothGrad, and tree-based local attributions
+* ``local``: LIME-style surrogates, Kernel SHAP-lite, permutation-sampling Shapley, Integrated Gradients, SmoothGrad, and tree-based local attributions
 * ``evaluate``: faithfulness checks for local explanations
 * ``report``: markdown report rendering
 * ``cli``: command-line interface over the above
@@ -21,7 +21,7 @@ from .ale import (
 )
 from .interaction import friedman_h_statistic, h_statistic
 from .importance import morris_screening, morris_elementary_effects, sobol_first_order, sobol_total_order
-from .local import integrated_gradients, kernel_shap, smoothgrad
+from .local import integrated_gradients, kernel_shap, sampling_shapley, smoothgrad
 from .partial_dependence import (
     ice,
     ice_curves,
@@ -45,6 +45,7 @@ __all__ = [
     "friedman_h_statistic",
     "h_statistic",
     "kernel_shap",
+    "sampling_shapley",
     "integrated_gradients",
     "smoothgrad",
     "sobol_first_order",
