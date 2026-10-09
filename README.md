@@ -18,6 +18,7 @@ truth is known, so every explanation can be checked against reality.
 | Accumulated local effects (1-D / 2-D) | Accumulated local prediction change as one feature (or a pair) moves across quantile bins, centered to mean zero; 2-D is the pure interaction after main effects are removed | curve / surface arrays | Apley & Zhu, "Visualizing the Effects of Predictor Variables in Black Box Supervised Learning Models" (JASA, 2020) |
 | Friedman H-statistic | Strength of pairwise interaction: share of joint PD variation not explained by the sum of main-effect PDs | scalar in [0, 1] | Friedman & Popescu, "Predictive Learning via Rule Ensembles" (Annals of Applied Statistics, 2008) |
 | ICE / centered ICE | Per-row predictions as one feature varies; optional centering at the first grid point so every curve starts at 0 | curve per row | Goldstein et al., "Peeking Inside the Black Box" (JCGS, 2015) |
+| Anchors | High-precision sufficient rule (feature-bin predicates) for an instance | predicates + precision + coverage | Ribeiro, Singh & Guestrin, "Anchors: High-Precision Model-Agnostic Explanations" (AAAI, 2018) |
 | LIME-style surrogate | Locally weighted linear fit around an instance | feature weights + intercept + local R2 | Ribeiro, Singh & Guestrin, "Why Should I Trust You?" (KDD, 2016) |
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
 | Kernel SHAP-lite | Model-agnostic Shapley values via coalition sampling + Shapley-kernel WLS | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee (NeurIPS, 2017) |
@@ -250,3 +251,21 @@ to support exact tree SHAP attribution.
 ## License
 
 MIT.
+
+
+## Anchors
+
+`anchor_explain` finds a compact set of feature-bin predicates that keep
+the model prediction close to `f(x)` with high precision on perturbed
+neighbours (Ribeiro, Singh & Guestrin, AAAI 2018). Continuous features are
+quantile-binned from the background sample.
+
+```python
+from interpretability.local import anchor_explain
+from interpretability.demo_model import fit_decision_tree, make_synthetic_data
+
+X, y, names = make_synthetic_data(n_samples=400, seed=0)
+model = fit_decision_tree(X, y, max_depth=4)
+result = anchor_explain(model.predict, X[0], X, n_samples=800, seed=0)
+print(result["precision"], result["coverage"], result["predicates"])
+```
