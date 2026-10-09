@@ -756,3 +756,213 @@ def sampling_shapley(
         "n_evaluations": int(preds.size),
         "feature_names": list(feature_names),
     }
+
+
+def _quantile_bins(background, n_bins):
+    """Per-feature quantile edges of shape (n_features, n_bins + 1)."""
+    background = np.asarray(background, dtype=float)
+    n_features = background.shape[1]
+    edges = np.empty((n_features, n_bins + 1), dtype=float)
+    quantiles = np.linspace(0.0, 1.0, n_bins + 1)
+    for j in range(n_features):
+        col = background[:, j]
+        e = np.quantile(col, quantiles)
+        # Ensure strictly increasing edges for digitize.
+        for i in range(1, e.size):
+            if e[i] <= e[i - 1]:
+                e[i] = e[i - 1] + 1e-12
+        edges[j] = e
+    return edges
+
+
+def _bin_indices(X, edges):
+    """Map each value to a bin index in ``0 .. n_bins-1``."""
+    X = np.asarray(X, dtype=float)
+    n_bins = edges.shape[1] - 1
+    out = np.empty(X.shape, dtype=int)
+    for j in range(X.shape[1]):
+        # digitize with inner edges; clip to [0, n_bins-1]
+        idx = np.digitize(X[:, j], edges[j, 1:-1], right=False)
+        out[:, j] = np.clip(idx, 0, n_bins - 1)
+    return out
+
+
+
+def anchor_explain(
+    predict,
+    x_row,
+    background,
+    *,
+    n_samples=1000,
+    n_bins=5,
+    precision_threshold=0.95,
+    min_coverage=0.05,
+    tolerance=None,
+    beam_size=5,
+    seed=None,
+):
+    """Find a high-precision tabular Anchor rule for ``x_row`` (Ribeiro et al.).
+
+    Continuous features are discretised into quantile bins from
+    ``background``. Candidate predicates are "feature j stays in the same
+    bin as the instance". A greedy beam search grows a conjunctive rule
+    that maximises the fraction of perturbed neighbours whose prediction
+    stays within ``tolerance`` of ``f(x)`` (precision), subject to
+    ``coverage >= min_coverage`` on the perturbed set. Stops when
+    precision reaches ``precision_threshold`` or no improving predicate
+    remains.
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y`` vectorised predictor.
+    x_row : array-like, shape (n_features,)
+        Instance to explain.
+    background : array-like, shape (n_background, n_features)
+        Empirical distribution used for bin edges and perturbations.
+    n_samples : int
+        Number of perturbed neighbours (plus the instance itself).
+    n_bins : int
+        Quantile bins per feature.
+    precision_threshold : float
+        Target precision in ``(0, 1]``.
+    min_coverage : float
+        Minimum fraction of neighbours that must satisfy the rule.
+    tolerance : float or None
+        Absolute prediction gap counted as a match. ``None`` uses
+        ``0.1 * std(predict(background))`` (or ``1e-6`` if that std is 0).
+    beam_size : int
+        Beam width for greedy predicate search.
+    seed : int or None
+        RNG seed for perturbations.
+
+    Returns
+    -------
+    dict
+        ``predicates`` (list of ``{feature, bin, low, high}``),
+        ``precision``, ``coverage``, ``prediction``, ``tolerance``,
+        ``n_samples``.
+    """
+    background = np.asarray(background, dtype=float)
+    x_row = np.asarray(x_row, dtype=float).ravel()
+    if background.ndim != 2:
+        raise ValueError("background must be 2-D")
+    if x_row.shape[0] != background.shape[1]:
+        raise ValueError("x_row width must match background")
+    if background.shape[0] < 2:
+        raise ValueError("background needs at least two rows")
+    if (
+        not isinstance(n_samples, (int, np.integer))
+        or isinstance(n_samples, bool)
+        or int(n_samples) < 10
+    ):
+        raise ValueError("n_samples must be an integer >= 10")
+    if (
+        not isinstance(n_bins, (int, np.integer))
+        or isinstance(n_bins, bool)
+        or int(n_bins) < 2
+    ):
+        raise ValueError("n_bins must be an integer >= 2")
+    if not 0.0 < float(precision_threshold) <= 1.0:
+        raise ValueError("precision_threshold must lie in (0, 1]")
+    if not 0.0 < float(min_coverage) <= 1.0:
+        raise ValueError("min_coverage must lie in (0, 1]")
+    if (
+        not isinstance(beam_size, (int, np.integer))
+        or isinstance(beam_size, bool)
+        or int(beam_size) < 1
+    ):
+        raise ValueError("beam_size must be a positive integer")
+
+    n_samples = int(n_samples)
+    n_bins = int(n_bins)
+    beam_size = int(beam_size)
+    rng = np.random.default_rng(seed)
+    n_features = background.shape[1]
+
+    edges = _quantile_bins(background, n_bins)
+    x_bins = _bin_indices(x_row.reshape(1, -1), edges)[0]
+
+    Z = background[rng.integers(0, background.shape[0], size=n_samples)]
+    Z = np.vstack([Z, x_row.reshape(1, -1)])
+    z_bins = _bin_indices(Z, edges)
+
+    preds = np.asarray(predict(Z), dtype=float).ravel()
+    if preds.shape[0] != Z.shape[0]:
+        raise ValueError("predict must return one value per row")
+    if not np.all(np.isfinite(preds)):
+        raise ValueError("predict must return finite values")
+    fx = float(preds[-1])
+
+    if tolerance is None:
+        bg_preds = np.asarray(predict(background), dtype=float).ravel()
+        scale = float(np.std(bg_preds))
+        tolerance = 0.1 * scale if scale > 0.0 else 1e-6
+    tolerance = float(tolerance)
+    if not np.isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("tolerance must be a finite non-negative number")
+
+    matches = np.abs(preds - fx) <= tolerance
+
+    def _score(rule_feats):
+        if not rule_feats:
+            return float(matches.mean()), 1.0
+        mask = np.ones(Z.shape[0], dtype=bool)
+        for j in rule_feats:
+            mask &= z_bins[:, j] == x_bins[j]
+        coverage = float(mask.mean())
+        if coverage <= 0.0:
+            return 0.0, 0.0
+        return float(matches[mask].mean()), coverage
+
+    # Beam of frozensets of feature indices.
+    beam = [frozenset()]
+    best_rule = frozenset()
+    best_precision, best_coverage = _score(best_rule)
+
+    for _depth in range(n_features):
+        candidates = []
+        for rule in beam:
+            for feat in range(n_features):
+                if feat in rule:
+                    continue
+                new_rule = rule | {feat}
+                precision, coverage = _score(new_rule)
+                if coverage < float(min_coverage):
+                    continue
+                candidates.append((new_rule, precision, coverage))
+        if not candidates:
+            break
+        candidates.sort(key=lambda c: (-c[1], -c[2], len(c[0])))
+        beam = [c[0] for c in candidates[:beam_size]]
+        top_rule, top_p, top_c = candidates[0]
+        improved = top_p > best_precision + 1e-12 or (
+            abs(top_p - best_precision) <= 1e-12 and top_c > best_coverage
+        )
+        if improved:
+            best_rule, best_precision, best_coverage = top_rule, top_p, top_c
+        if best_precision >= float(precision_threshold):
+            break
+        if not improved:
+            break
+
+    predicates = []
+    for j in sorted(best_rule):
+        b = int(x_bins[j])
+        predicates.append(
+            {
+                "feature": int(j),
+                "bin": b,
+                "low": float(edges[j, b]),
+                "high": float(edges[j, b + 1]),
+            }
+        )
+    precision, coverage = _score(best_rule)
+    return {
+        "predicates": predicates,
+        "precision": precision,
+        "coverage": coverage,
+        "prediction": fx,
+        "tolerance": tolerance,
+        "n_samples": int(Z.shape[0]),
+    }
