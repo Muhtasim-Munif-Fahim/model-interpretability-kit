@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -19,6 +19,7 @@ from .importance import loco_importance, morris_screening, permutation_importanc
 from .local import integrated_gradients, kernel_shap, lime_explain, sampling_shapley, smoothgrad
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
+from .sage import sage_values
 
 __all__ = ["main", "build_parser"]
 
@@ -110,6 +111,11 @@ def build_parser():
     p_morris = sub.add_parser("morris", help="Morris elementary-effects screening")
     p_morris.add_argument("--n-trajectories", type=int, default=20, help="number of Morris trajectories")
     p_morris.add_argument("--n-levels", type=int, default=4, help="even number of grid levels")
+
+    p_sage = sub.add_parser("sage", help="SAGE global (loss-based Shapley) importance")
+    p_sage.add_argument("--n-permutations", type=int, default=256, help="(row, permutation) draws")
+    p_sage.add_argument("--n-background", type=int, default=64, help="background rows for imputation")
+    p_sage.add_argument("--loss", default="mse", choices=("mse", "mae"))
 
     p_report = sub.add_parser("report", help="write a markdown report")
     p_report.add_argument("--out", default="demo_report.md")
@@ -537,6 +543,32 @@ def _cmd_report(args):
     return 0
 
 
+def _cmd_sage(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    result = sage_values(
+        model.predict,
+        X,
+        y,
+        loss=args.loss,
+        n_permutations=args.n_permutations,
+        n_background=args.n_background,
+        seed=args.seed,
+        feature_names=names,
+    )
+    print(
+        "SAGE values (%s; loss(empty) = %.4f, loss(model) = %.4f, explained = %.4f):"
+        % (args.loss, result["loss_empty"], result["loss_full"], result["total"])
+    )
+    order = np.argsort(-result["values"])
+    for j in order:
+        print(
+            "  %-6s %8.4f +/- %.4f  (%5.1f%%)"
+            % (names[j], result["values"][j], result["std_error"][j], 100 * result["ratio_to_total"][j])
+        )
+    return 0
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "importance":
@@ -567,6 +599,8 @@ def main(argv=None):
         return _cmd_sobol_total(args)
     if args.command == "morris":
         return _cmd_morris(args)
+    if args.command == "sage":
+        return _cmd_sage(args)
     if args.command == "report":
         return _cmd_report(args)
     return 0
