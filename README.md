@@ -14,6 +14,7 @@ truth is known, so every explanation can be checked against reality.
 | Permutation importance | Drop in model score when a feature's column is shuffled | mean ± std importance per feature | Fisher, Rudin & Dominici, "All Models are Wrong, but Many Are Useful" (JMLR, 2019); Breiman, "Random Forests" (2001) |
 | Drop-column importance | Drop in score when a feature is removed and the model is refit on the same rows | importance per feature | Same class of variable-importance measures |
 | Leave-one-covariate-out (LOCO) | Increase in held-out loss when a covariate is left out of the fit | mean ± std importance per feature | Lei, G'Sell, Rinaldo, Tibshirani & Wasserman, "Distribution-Free Predictive Inference for Regression" (JASA, 2018) |
+| SAGE | Shapley values of the model's *loss*: each feature's share of the drop from the constant-prediction loss to the model's loss, with absent features marginalized over a background set (permutation estimator) | per-feature values summing exactly to `loss(empty) - loss(model)`, plus Monte Carlo standard errors | Covert, Lundberg & Lee, "Understanding Global Feature Importance by Additive Importance Measures" (NeurIPS, 2020) |
 | Partial dependence (1-D / 2-D) | Average prediction as one or two features vary over a grid; 1-D can include a normal-approximation confidence band for that mean | curve / surface arrays | Friedman, "Greedy Function Approximation" (Annals of Statistics, 2001) |
 | Accumulated local effects (1-D / 2-D) | Accumulated local prediction change as one feature (or a pair) moves across quantile bins, centered to mean zero; 2-D is the pure interaction after main effects are removed | curve / surface arrays | Apley & Zhu, "Visualizing the Effects of Predictor Variables in Black Box Supervised Learning Models" (JASA, 2020) |
 | Friedman H-statistic | Strength of pairwise interaction: share of joint PD variation not explained by the sum of main-effect PDs | scalar in [0, 1] | Friedman & Popescu, "Predictive Learning via Rule Ensembles" (Annals of Applied Statistics, 2008) |
@@ -171,6 +172,7 @@ python -m interpretability.cli --seed 42 kernel-shap --rows 0,1 --n-samples 200
 python -m interpretability.cli --seed 42 sampling-shapley --rows 0,1 --n-permutations 100
 python -m interpretability.cli --seed 42 integrated-gradients --rows 0,1 --n-steps 32
 python -m interpretability.cli --seed 42 smoothgrad --rows 0,1 --n-samples 50 --noise-sigma 0.1
+python -m interpretability.cli --seed 42 sage --n-permutations 256 --n-background 64
 python -m interpretability.cli --seed 42 ale --features 0
 python -m interpretability.cli --seed 42 ale --features 0,2
 python -m interpretability.cli --seed 42 explain --rows 0,1
@@ -269,3 +271,28 @@ model = fit_decision_tree(X, y, max_depth=4)
 result = anchor_explain(model.predict, X[0], X, n_samples=800, seed=0)
 print(result["precision"], result["coverage"], result["predicates"])
 ```
+
+
+## SAGE global importance
+
+`sage_values` estimates SAGE values (Covert et al., 2020). It is a global,
+loss-based importance with a Shapley guarantee. Each draw samples an
+evaluation row and a feature ordering, then adds the features one at a time.
+Each feature is credited with the drop in loss it causes. Absent features
+are averaged over the whole background set.
+
+```python
+from interpretability import sage_values
+
+res = sage_values(model.predict, X, y, loss="mse", n_permutations=512, n_background=64, seed=0)
+res["values"], res["std_error"]       # loss units; positive = feature lowers the loss
+res["total"]                          # == res["loss_empty"] - res["loss_full"]
+```
+
+`loss` can be `"mse"`, `"mae"`, `"log_loss"` (for a positive-class
+probability), or a callable that returns per-row losses.
+`sage_value_function(predict, X, y, subset)` returns the exact `v(S)` for
+small-`d` checks. Compared with permutation importance, SAGE averages over
+feature orderings, so correlated features and interactions share credit
+instead of each being scored in isolation. A pure `x0 * x1` interaction is
+split evenly between the two features.
