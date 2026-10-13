@@ -14,6 +14,7 @@ truth is known, so every explanation can be checked against reality.
 | Permutation importance | Drop in model score when a feature's column is shuffled | mean ± std importance per feature | Fisher, Rudin & Dominici, "All Models are Wrong, but Many Are Useful" (JMLR, 2019); Breiman, "Random Forests" (2001) |
 | Drop-column importance | Drop in score when a feature is removed and the model is refit on the same rows | importance per feature | Same class of variable-importance measures |
 | Leave-one-covariate-out (LOCO) | Increase in held-out loss when a covariate is left out of the fit | mean ± std importance per feature | Lei, G'Sell, Rinaldo, Tibshirani & Wasserman, "Distribution-Free Predictive Inference for Regression" (JASA, 2018) |
+| Conditional permutation importance | Drop in score when a feature is replaced by a draw from (an approximation of) its conditional distribution given the other features, either by permuting linear-regression residuals or by permuting within joint quantile strata of the most-correlated features | mean ± std importance per feature, plus the conditioning sets | Strobl, Boulesteix, Kneib, Augustin & Zeileis, "Conditional variable importance for random forests" (BMC Bioinformatics, 2008); Watson & Wright, "Testing conditional independence in supervised learning algorithms" (Machine Learning, 2021); Molnar et al., "Model-agnostic feature importance and effects with dependent features: a conditional subgroup approach" (DMKD, 2023) |
 | SAGE | Shapley values of the model's *loss*: each feature's share of the drop from the constant-prediction loss to the model's loss, with absent features marginalized over a background set (permutation estimator) | per-feature values summing exactly to `loss(empty) - loss(model)`, plus Monte Carlo standard errors | Covert, Lundberg & Lee, "Understanding Global Feature Importance by Additive Importance Measures" (NeurIPS, 2020) |
 | Partial dependence (1-D / 2-D) | Average prediction as one or two features vary over a grid; 1-D can include a normal-approximation confidence band for that mean | curve / surface arrays | Friedman, "Greedy Function Approximation" (Annals of Statistics, 2001) |
 | Accumulated local effects (1-D / 2-D) | Accumulated local prediction change as one feature (or a pair) moves across quantile bins, centered to mean zero; 2-D is the pure interaction after main effects are removed | curve / surface arrays | Apley & Zhu, "Visualizing the Effects of Predictor Variables in Black Box Supervised Learning Models" (JASA, 2020) |
@@ -165,6 +166,8 @@ print(exp["coefficients"], exp["intercept"], exp["weighted_r2"])
 ```bash
 python -m interpretability.cli --seed 42 importance --n-repeats 10
 python -m interpretability.cli --seed 42 loco --n-repeats 5 --test-size 0.25
+python -m interpretability.cli --seed 42 conditional-importance --method residual --n-repeats 10
+python -m interpretability.cli --seed 42 conditional-importance --method grid --n-bins 4 --n-conditioning 2
 python -m interpretability.cli --seed 42 pdp --features 0,2
 python -m interpretability.cli --seed 42 pdp --features 0 --conf-level 0.95
 python -m interpretability.cli --seed 42 ice --features 0 --rows 0,1,2 --centered
@@ -296,3 +299,38 @@ small-`d` checks. Compared with permutation importance, SAGE averages over
 feature orderings, so correlated features and interactions share credit
 instead of each being scored in isolation. A pure `x0 * x1` interaction is
 split evenly between the two features.
+
+## Conditional permutation importance
+
+Marginal permutation importance shuffles a column independently of the
+others. With correlated features this asks the model about rows that never
+occur, and a feature that is redundant given the others can still look
+important. `conditional_permutation_importance` keeps each feature's
+dependence on the rest, so the score drop measures what `x_j` adds beyond
+the other features:
+
+- `method="residual"` (default) regresses `x_j` on the other columns and
+  permutes only the residuals, `x_j* = x̂_j + perm(r_j)`. This is exact for
+  jointly Gaussian features. For `f = Σx` under MSE it recovers the
+  closed-form importance `2·Var(x_j | x_{-j})`.
+- `method="grid"` permutes `x_j` within joint quantile strata (`n_bins` per
+  feature) of its `n_conditioning` most-correlated columns, or of explicit
+  `conditioning` columns.
+
+With one feature, or an empty conditioning set, both methods reduce to
+`permutation_importance`; with the same seed they make the same draws.
+
+```python
+import numpy as np
+from interpretability import conditional_permutation_importance
+from interpretability.importance import permutation_importance
+
+rng = np.random.default_rng(0)
+x0 = rng.normal(size=2000)
+X = np.column_stack([x0, x0 + 0.1 * rng.normal(size=2000), rng.normal(size=2000)])
+y = X.sum(axis=1)
+model = lambda Z: Z.sum(axis=1)
+
+print(permutation_importance(model, X, y, seed=0)["mean"])              # x0, x1 look big
+print(conditional_permutation_importance(model, X, y, seed=0)["mean"])  # x0, x1 near 0
+```

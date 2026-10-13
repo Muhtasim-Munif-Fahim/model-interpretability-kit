@@ -1,4 +1,4 @@
-"""Global feature importance: permutation, drop-column, LOCO, Sobol, and Morris.
+"""Global feature importance: permutation, conditional permutation, drop-column, LOCO, Sobol, and Morris.
 
 These methods are model-agnostic. Permutation importance only needs a
 ``predict`` callable. Drop-column and leave-one-covariate-out (LOCO)
@@ -10,7 +10,7 @@ rows. Sobol and Morris screening also need only ``predict``.
 
 import numpy as np
 
-from ._utils import as_1d, as_2d
+from ._utils import as_1d, as_2d, check_feature_index
 
 __all__ = [
     "r2_score",
@@ -18,6 +18,7 @@ __all__ = [
     "mean_squared_error",
     "zero_one_loss",
     "permutation_importance",
+    "conditional_permutation_importance",
     "drop_column_importance",
     "loco_importance",
     "sobol_first_order",
@@ -173,6 +174,172 @@ def permutation_importance(predict, X, y, metric=None, n_repeats=5, seed=None):
         "std": scores.std(axis=1),
         "baseline": baseline,
         "n_repeats": n_repeats,
+    }
+
+
+def _residual_sampler(X, j):
+    """Least-squares fit of column ``j`` on the others: fitted values and residuals."""
+    design = np.column_stack([np.ones(X.shape[0]), np.delete(X, j, axis=1)])
+    coef, *_ = np.linalg.lstsq(design, X[:, j], rcond=None)
+    fitted = design @ coef
+    return fitted, X[:, j] - fitted
+
+
+def _conditioning_strata(X, j, n_conditioning, n_bins, conditioning):
+    """Joint quantile-bin strata of the conditioning features for column ``j``."""
+    n_features = X.shape[1]
+    if conditioning is not None:
+        cols = [int(c) for c in conditioning[j]] if isinstance(conditioning, dict) else [
+            int(c) for c in conditioning
+        ]
+        cols = [c for c in cols if c != j]
+        for c in cols:
+            check_feature_index(c, n_features)
+    else:
+        others = [k for k in range(n_features) if k != j]
+        if not others:
+            cols = []
+        else:
+            with np.errstate(invalid="ignore", divide="ignore"):
+                corr = np.array(
+                    [abs(np.corrcoef(X[:, j], X[:, k])[0, 1]) for k in others]
+                )
+            corr = np.nan_to_num(corr, nan=0.0)
+            order = np.argsort(-corr, kind="stable")[:n_conditioning]
+            cols = [others[k] for k in order]
+    if not cols:
+        return np.zeros(X.shape[0], dtype=int), cols
+    codes = np.zeros(X.shape[0], dtype=np.int64)
+    for c in cols:
+        edges = np.unique(np.quantile(X[:, c], np.linspace(0, 1, n_bins + 1)[1:-1]))
+        codes = codes * (n_bins + 1) + np.searchsorted(edges, X[:, c], side="right")
+    _, strata = np.unique(codes, return_inverse=True)
+    return strata, cols
+
+
+def conditional_permutation_importance(
+    predict,
+    X,
+    y,
+    metric=None,
+    n_repeats=5,
+    method="residual",
+    n_bins=4,
+    n_conditioning=1,
+    conditioning=None,
+    seed=None,
+):
+    """Permutation importance that keeps each feature's dependence on the rest.
+
+    Marginal permutation importance shuffles a column independently of the
+    other features, so with correlated inputs the model is queried far from
+    the data and a feature that is redundant given the others still looks
+    important (Strobl et al., 2008; Hooker, Mentch & Zhou, 2021). The
+    conditional variant replaces ``x_j`` by a draw from (an approximation
+    of) ``x_j | x_{-j}``, so the score drop measures the information ``x_j``
+    adds *beyond* what the remaining features already carry.
+
+    Two samplers are provided:
+
+    * ``method="residual"`` (default): regress ``x_j`` linearly on the other
+      features and permute only the residuals, ``x_j* = x̂_j + perm(r_j)``.
+      Exact for jointly Gaussian features (the conditional-predictive-impact
+      construction of Watson & Wright, 2021, with a Gaussian sampler).
+    * ``method="grid"``: permute ``x_j`` within strata formed by joint
+      quantile bins (``n_bins`` per feature) of the conditioning features,
+      following the conditional permutation scheme of Strobl et al. (2008)
+      and Molnar et al.'s conditional-subgroup PFI (2023). Conditioning
+      features are the ``n_conditioning`` columns most correlated with
+      ``x_j`` unless ``conditioning`` is given as a list (shared by every
+      feature) or a ``{j: [columns]}`` mapping.
+
+    With a single feature, or no conditioning features, both samplers reduce
+    to :func:`permutation_importance` (and, with the same ``seed``, give the
+    same draws).
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y_pred`` where ``X`` is a 2-D array.
+    X, y : ndarray
+        Evaluation features and targets.
+    metric : callable or None
+        ``metric(y_true, y_pred) -> float``, higher is better. Defaults to
+        ``r2_score``.
+    n_repeats : int
+        Conditional permutations per feature.
+    method : {"residual", "grid"}
+        Conditional sampler.
+    n_bins : int
+        Quantile bins per conditioning feature for ``method="grid"``.
+    n_conditioning : int
+        Number of most-correlated conditioning features for ``"grid"``.
+    conditioning : list, dict or None
+        Explicit conditioning columns for ``"grid"``.
+    seed : int or None
+        Random seed.
+
+    Returns
+    -------
+    dict
+        ``{"mean", "std", "baseline", "n_repeats", "method",
+        "conditioning"}`` where ``mean``/``std`` mirror
+        :func:`permutation_importance` and ``conditioning`` lists the
+        columns each feature was conditioned on (all others for
+        ``"residual"``).
+    """
+    X = as_2d(X)
+    y = as_1d(y, X.shape[0])
+    if n_repeats < 1:
+        raise ValueError("n_repeats must be at least 1")
+    if method not in {"residual", "grid"}:
+        raise ValueError("method must be 'residual' or 'grid'")
+    if isinstance(n_bins, bool) or not isinstance(n_bins, (int, np.integer)) or n_bins < 2:
+        raise ValueError("n_bins must be an integer of at least 2")
+    if (
+        isinstance(n_conditioning, bool)
+        or not isinstance(n_conditioning, (int, np.integer))
+        or n_conditioning < 1
+    ):
+        raise ValueError("n_conditioning must be a positive integer")
+    metric = _metric_or_default(metric)
+    baseline = float(metric(y, predict(X)))
+    n_rows, n_features = X.shape
+    rng = np.random.default_rng(seed)
+    scores = np.empty((n_features, n_repeats))
+    used = []
+    for j in range(n_features):
+        if method == "residual":
+            if n_features == 1:
+                fitted = np.zeros(n_rows)
+                resid = X[:, 0].copy()
+            else:
+                fitted, resid = _residual_sampler(X, j)
+            used.append([k for k in range(n_features) if k != j])
+            for r in range(n_repeats):
+                X_perm = X.copy()
+                X_perm[:, j] = fitted + rng.permutation(resid)
+                scores[j, r] = float(metric(y, predict(X_perm)))
+        else:
+            strata, cols = _conditioning_strata(X, j, int(n_conditioning), int(n_bins), conditioning)
+            used.append(cols)
+            groups = [np.flatnonzero(strata == g) for g in range(int(strata.max()) + 1)]
+            col = X[:, j]
+            for r in range(n_repeats):
+                X_perm = X.copy()
+                if len(groups) == 1:
+                    X_perm[:, j] = rng.permutation(col)
+                else:
+                    for idx in groups:
+                        X_perm[idx, j] = col[rng.permutation(idx)]
+                scores[j, r] = float(metric(y, predict(X_perm)))
+    return {
+        "mean": baseline - scores.mean(axis=1),
+        "std": scores.std(axis=1),
+        "baseline": baseline,
+        "n_repeats": n_repeats,
+        "method": method,
+        "conditioning": used,
     }
 
 
