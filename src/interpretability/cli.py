@@ -1,7 +1,7 @@
 """Command-line interface for the interpretability toolkit.
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
-expose a single explanation type each: ``importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
+expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
 ``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
@@ -15,7 +15,7 @@ from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .interaction import friedman_h_statistic
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
-from .importance import loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
+from .importance import conditional_permutation_importance, loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
 from .local import integrated_gradients, kernel_shap, lime_explain, sampling_shapley, smoothgrad
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .report import render_report
@@ -36,6 +36,20 @@ def build_parser():
 
     p_importance = sub.add_parser("importance", help="permutation feature importance")
     p_importance.add_argument("--n-repeats", type=int, default=5)
+
+    p_cond = sub.add_parser(
+        "conditional-importance",
+        help="conditional permutation importance (residual or grid sampler)",
+    )
+    p_cond.add_argument("--n-repeats", type=int, default=5)
+    p_cond.add_argument("--method", choices=("residual", "grid"), default="residual")
+    p_cond.add_argument("--n-bins", type=int, default=4, help="quantile bins for --method grid")
+    p_cond.add_argument(
+        "--n-conditioning",
+        type=int,
+        default=1,
+        help="most-correlated features to condition on for --method grid",
+    )
 
     p_loco = sub.add_parser("loco", help="leave-one-covariate-out importance")
     p_loco.add_argument("--n-repeats", type=int, default=3)
@@ -155,6 +169,34 @@ def _cmd_importance(args):
     print("Permutation importance (baseline R2 = %.4f):" % result["baseline"])
     for j in order:
         print("  %-6s %8.4f +/- %.4f" % (names[j], result["mean"][j], result["std"][j]))
+    return 0
+
+
+def _cmd_conditional_importance(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    marginal = permutation_importance(model.predict, X, y, n_repeats=args.n_repeats, seed=args.seed)
+    result = conditional_permutation_importance(
+        model.predict,
+        X,
+        y,
+        n_repeats=args.n_repeats,
+        method=args.method,
+        n_bins=args.n_bins,
+        n_conditioning=args.n_conditioning,
+        seed=args.seed,
+    )
+    order = np.argsort(-result["mean"])
+    print(
+        "Conditional permutation importance (%s sampler, baseline R2 = %.4f):"
+        % (result["method"], result["baseline"])
+    )
+    print("  %-6s %18s %10s" % ("feature", "conditional", "marginal"))
+    for j in order:
+        print(
+            "  %-6s %8.4f +/- %.4f %10.4f"
+            % (names[j], result["mean"][j], result["std"][j], marginal["mean"][j])
+        )
     return 0
 
 
@@ -573,6 +615,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "importance":
         return _cmd_importance(args)
+    if args.command == "conditional-importance":
+        return _cmd_conditional_importance(args)
     if args.command == "loco":
         return _cmd_loco(args)
     if args.command == "pdp":
