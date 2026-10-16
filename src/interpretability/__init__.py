@@ -9,6 +9,7 @@ plain callable ``predict(X) -> y``:
 * ``ale``: 1-D/2-D accumulated local effects curves and interaction surfaces
 * ``interaction``: Friedman H-statistic for pairwise interaction strength
 * ``local``: LIME-style surrogates, Anchors, Kernel SHAP-lite, permutation-sampling Shapley, Integrated Gradients, SmoothGrad, and tree-based local attributions
+* ``counterfactual``: Growing Spheres counterfactual explanations (sparse, bounded, immutable-aware)
 * ``evaluate``: faithfulness checks for local explanations
 * ``report``: markdown report rendering
 * ``cli``: command-line interface over the above
@@ -20,6 +21,7 @@ from .ale import (
     ale,
     ale_2d,
 )
+from .counterfactual import growing_spheres_counterfactual, sample_spherical_layer
 from .interaction import friedman_h_statistic, h_statistic
 from .importance import conditional_permutation_importance, morris_screening, morris_elementary_effects, sobol_first_order, sobol_total_order
 from .local import anchor_explain, integrated_gradients, kernel_shap, sampling_shapley, smoothgrad
@@ -52,6 +54,8 @@ __all__ = [
     "integrated_gradients",
     "smoothgrad",
     "sage_values",
+    "growing_spheres_counterfactual",
+    "sample_spherical_layer",
     "conditional_permutation_importance",
     "sobol_first_order",
     "sobol_total_order",
