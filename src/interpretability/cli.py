@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage``, ``counterfactual`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -13,6 +13,7 @@ import numpy as np
 
 from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .interaction import friedman_h_statistic
+from .counterfactual import growing_spheres_counterfactual
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import conditional_permutation_importance, loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
@@ -130,6 +131,14 @@ def build_parser():
     p_sage.add_argument("--n-permutations", type=int, default=256, help="(row, permutation) draws")
     p_sage.add_argument("--n-background", type=int, default=64, help="background rows for imputation")
     p_sage.add_argument("--loss", default="mse", choices=("mse", "mae"))
+
+    p_cf = sub.add_parser("counterfactual", help="Growing Spheres counterfactual for one row")
+    p_cf.add_argument("--row", type=int, default=0, help="row index to explain")
+    p_cf.add_argument("--target-min", type=float, default=None, help="lowest acceptable prediction")
+    p_cf.add_argument("--target-max", type=float, default=None, help="highest acceptable prediction")
+    p_cf.add_argument("--immutable", default=None, help="comma-separated feature indices to freeze")
+    p_cf.add_argument("--samples-per-layer", dest="cf_samples", type=int, default=500, help="samples per layer")
+    p_cf.add_argument("--no-sparsify", action="store_true", help="skip the feature-selection step")
 
     p_report = sub.add_parser("report", help="write a markdown report")
     p_report.add_argument("--out", default="demo_report.md")
@@ -611,6 +620,57 @@ def _cmd_sage(args):
     return 0
 
 
+def _cmd_counterfactual(args):
+    if args.target_min is None and args.target_max is None:
+        sys.exit("counterfactual needs --target-min and/or --target-max")
+    X, y, names = _load_data(args)
+    if args.row < 0 or args.row >= X.shape[0]:
+        sys.exit("row index %d out of range" % args.row)
+    model = _fit(X, y, args.seed)
+    immutable = _parse_indices(args.immutable, "immutable") if args.immutable else None
+    try:
+        result = growing_spheres_counterfactual(
+            model.predict,
+            X[args.row],
+            X,
+            target_range=(args.target_min, args.target_max),
+            immutable=immutable,
+            n_samples=args.cf_samples,
+            sparsify=not args.no_sparsify,
+            seed=args.seed,
+            feature_names=names,
+        )
+    except ValueError as exc:
+        sys.exit(str(exc))
+    print(
+        "Counterfactual for row %d (prediction %.4f, target [%s, %s]):"
+        % (
+            args.row,
+            result["prediction_original"],
+            "-inf" if args.target_min is None else "%g" % args.target_min,
+            "inf" if args.target_max is None else "%g" % args.target_max,
+        )
+    )
+    if not result["found"]:
+        print("  none found within the search radius (%d evaluations)" % result["n_evaluations"])
+        return 1
+    print(
+        "  new prediction %.4f, %d feature(s) changed, standardized L2 %.4f, %d evaluations"
+        % (
+            result["prediction_counterfactual"],
+            result["n_changed"],
+            result["distance_l2"],
+            result["n_evaluations"],
+        )
+    )
+    for j in result["changed_features"]:
+        print(
+            "  %-6s %10.4f -> %10.4f  (%+.4f)"
+            % (names[j], result["original"][j], result["counterfactual"][j], result["delta"][j])
+        )
+    return 0
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "importance":
@@ -637,6 +697,8 @@ def main(argv=None):
         return _cmd_integrated_gradients(args)
     if args.command == "smoothgrad":
         return _cmd_smoothgrad(args)
+    if args.command == "counterfactual":
+        return _cmd_counterfactual(args)
     if args.command == "sobol":
         return _cmd_sobol(args)
     if args.command == "sobol-total":
