@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage``, ``counterfactual`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage``, ``counterfactual``, ``prototypes`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -19,6 +19,7 @@ from .evaluate import top_feature_overlap
 from .importance import conditional_permutation_importance, loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
 from .local import integrated_gradients, kernel_shap, lime_explain, sampling_shapley, smoothgrad
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
+from .prototypes import mmd_critic
 from .report import render_report
 from .sage import sage_values
 
@@ -139,6 +140,12 @@ def build_parser():
     p_cf.add_argument("--immutable", default=None, help="comma-separated feature indices to freeze")
     p_cf.add_argument("--samples-per-layer", dest="cf_samples", type=int, default=500, help="samples per layer")
     p_cf.add_argument("--no-sparsify", action="store_true", help="skip the feature-selection step")
+
+    p_proto = sub.add_parser("prototypes", help="MMD-critic prototypes and criticisms of the data")
+    p_proto.add_argument("--n-prototypes", type=int, default=5, help="number of prototypes")
+    p_proto.add_argument("--n-criticisms", type=int, default=3, help="number of criticisms")
+    p_proto.add_argument("--gamma", type=float, default=None, help="RBF bandwidth (default: median heuristic)")
+    p_proto.add_argument("--no-regularizer", action="store_true", help="plain top-|witness| criticisms")
 
     p_report = sub.add_parser("report", help="write a markdown report")
     p_report.add_argument("--out", default="demo_report.md")
@@ -671,6 +678,37 @@ def _cmd_counterfactual(args):
     return 0
 
 
+def _cmd_prototypes(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    try:
+        result = mmd_critic(
+            X,
+            n_prototypes=args.n_prototypes,
+            n_criticisms=args.n_criticisms,
+            gamma=args.gamma,
+            regularizer=None if args.no_regularizer else "logdet",
+        )
+    except ValueError as exc:
+        sys.exit(str(exc))
+    pred = model.predict(X)
+    print(
+        "MMD-critic on %d rows (gamma = %.4g, MMD^2(data, prototypes) = %.5f)"
+        % (X.shape[0], result["gamma"], result["mmd2"])
+    )
+    header = "  %-5s " + " ".join("%8s" for _ in names) + " %9s %9s"
+    print(header % (("row",) + tuple(names) + ("pred", "extra")))
+    print("Prototypes (extra = rows covered):")
+    for p, idx in enumerate(result["prototypes"]):
+        vals = " ".join("%8.3f" % v for v in X[idx])
+        print("  %-5d %s %9.4f %9d" % (idx, vals, pred[idx], result["coverage"][p]))
+    print("Criticisms (extra = witness; >0 under-represented, <0 over-represented):")
+    for idx in result["criticisms"]:
+        vals = " ".join("%8.3f" % v for v in X[idx])
+        print("  %-5d %s %9.4f %+9.4f" % (idx, vals, pred[idx], result["witness"][idx]))
+    return 0
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "importance":
@@ -707,6 +745,8 @@ def main(argv=None):
         return _cmd_morris(args)
     if args.command == "sage":
         return _cmd_sage(args)
+    if args.command == "prototypes":
+        return _cmd_prototypes(args)
     if args.command == "report":
         return _cmd_report(args)
     return 0

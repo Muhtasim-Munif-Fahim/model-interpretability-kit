@@ -30,6 +30,7 @@ truth is known, so every explanation can be checked against reality.
 | Sobol first-order | Fraction of output variance explained by each feature alone (Saltelli / pick-freeze) | `S1` per feature in `[0, 1]` | Sobol (1993); Saltelli et al., "Global Sensitivity Analysis" (2008) |
 | Sobol total-order | Fraction of variance from a feature and all its interactions (`1 - Var(E[Y|X_~i])/Var(Y)`) | `ST` (and optional `S1`) per feature in `[0, 1]` | Sobol (1993); Jansen / Saltelli pick-freeze |
 | Growing Spheres counterfactuals | Smallest (standardized L2) change to an instance that moves its prediction into a target interval / class, found by sampling spherical layers outward, then sparsified by resetting features | counterfactual point, changed features, deltas, distance, evaluations | Laugel, Lesot, Marsala, Renard & Detyniecki, "Inverse Classification for Comparison-based Interpretability in Machine Learning" (2018); Wachter, Mittelstadt & Russell, "Counterfactual Explanations without Opening the Black Box" (Harvard JOLT, 2018) |
+| MMD-critic prototypes & criticisms | Greedy rows whose empirical distribution minimizes RBF-kernel MMD to the data (prototypes), plus rows with the largest witness-function magnitude under a log-det diversity term (criticisms); optional per-class prototype allocation | row indices, witness values, MMD^2, coverage per prototype | Kim, Khanna & Koyejo, "Examples are not Enough, Learn to Criticize! Criticism for Interpretability" (NeurIPS, 2016) |
 | Faithfulness checks | Local surrogate R2; top-feature overlap between local and global attributions | per-instance numbers | Molnar, "Interpretable Machine Learning" (2022) |
 
 The broader conceptual framework and caveats are described in Christoph
@@ -178,6 +179,7 @@ python -m interpretability.cli --seed 42 integrated-gradients --rows 0,1 --n-ste
 python -m interpretability.cli --seed 42 smoothgrad --rows 0,1 --n-samples 50 --noise-sigma 0.1
 python -m interpretability.cli --seed 42 sage --n-permutations 256 --n-background 64
 python -m interpretability.cli --seed 42 counterfactual --row 0 --target-max 4.0 --immutable 4
+python -m interpretability.cli --seed 42 prototypes --n-prototypes 5 --n-criticisms 3
 python -m interpretability.cli --seed 42 ale --features 0
 python -m interpretability.cli --seed 42 ale --features 0,2
 python -m interpretability.cli --seed 42 explain --rows 0,1
@@ -327,6 +329,27 @@ res["changed_feature_names"], res["delta"], res["prediction_counterfactual"]
 
 `found=False` is returned when no counterfactual exists within `max_layers`
 (for example when bounds make the target unreachable).
+
+## Prototypes and criticisms (MMD-critic)
+
+`mmd_critic` summarizes a dataset with real rows. Prototypes are picked
+greedily so their distribution is close to the data's in maximum mean
+discrepancy under an RBF kernel (the objective is monotone submodular, so
+greedy is near-optimal). Criticisms are rows the prototypes explain badly:
+the largest values of the witness function
+`w(x) = mean_i k(x, x_i) - mean_j k(x, z_j)`, chosen with a log-determinant
+term so they are spread out. Positive witness marks under-represented
+regions, negative marks over-represented ones.
+
+```python
+from interpretability import mmd_critic
+
+res = mmd_critic(X, n_prototypes=10, n_criticisms=5)   # median-heuristic gamma
+X[res["prototypes"]], X[res["criticisms"]], res["mmd2"], res["coverage"]
+res = mmd_critic(X, n_prototypes=10, labels=y_class)   # prototypes per class
+```
+
+Columns are standardized before computing kernels by default.
 
 ## Conditional permutation importance
 
