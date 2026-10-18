@@ -10,6 +10,7 @@ plain callable ``predict(X) -> y``:
 * ``interaction``: Friedman H-statistic for pairwise interaction strength
 * ``local``: LIME-style surrogates, Anchors, Kernel SHAP-lite, permutation-sampling Shapley, Integrated Gradients, SmoothGrad, and tree-based local attributions
 * ``counterfactual``: Growing Spheres counterfactual explanations (sparse, bounded, immutable-aware)
+* ``prototypes``: MMD-critic prototypes and criticisms (example-based data summaries)
 * ``evaluate``: faithfulness checks for local explanations
 * ``report``: markdown report rendering
 * ``cli``: command-line interface over the above
@@ -25,6 +26,7 @@ from .counterfactual import growing_spheres_counterfactual, sample_spherical_lay
 from .interaction import friedman_h_statistic, h_statistic
 from .importance import conditional_permutation_importance, morris_screening, morris_elementary_effects, sobol_first_order, sobol_total_order
 from .local import anchor_explain, integrated_gradients, kernel_shap, sampling_shapley, smoothgrad
+from .prototypes import mmd_critic, mmd_squared, select_criticisms, select_prototypes, witness_function
 from .sage import sage_values
 from .partial_dependence import (
     ice,
@@ -56,6 +58,11 @@ __all__ = [
     "sage_values",
     "growing_spheres_counterfactual",
     "sample_spherical_layer",
+    "mmd_critic",
+    "mmd_squared",
+    "select_prototypes",
+    "select_criticisms",
+    "witness_function",
     "conditional_permutation_importance",
     "sobol_first_order",
     "sobol_total_order",
