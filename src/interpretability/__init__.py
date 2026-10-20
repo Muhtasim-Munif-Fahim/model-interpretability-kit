@@ -9,6 +9,7 @@ plain callable ``predict(X) -> y``:
 * ``ale``: 1-D/2-D accumulated local effects curves and interaction surfaces
 * ``interaction``: Friedman H-statistic for pairwise interaction strength
 * ``local``: LIME-style surrogates, Anchors, Kernel SHAP-lite, permutation-sampling Shapley, Integrated Gradients, SmoothGrad, and tree-based local attributions
+* ``shapley_exact``: exact model-agnostic Shapley values, Banzhaf values and Shapley interaction values by coalition enumeration
 * ``counterfactual``: Growing Spheres counterfactual explanations (sparse, bounded, immutable-aware)
 * ``prototypes``: MMD-critic prototypes and criticisms (example-based data summaries)
 * ``evaluate``: faithfulness checks for local explanations
@@ -28,6 +29,7 @@ from .importance import conditional_permutation_importance, morris_screening, mo
 from .local import anchor_explain, integrated_gradients, kernel_shap, sampling_shapley, smoothgrad
 from .prototypes import mmd_critic, mmd_squared, select_criticisms, select_prototypes, witness_function
 from .sage import sage_values
+from .shapley_exact import banzhaf_values, coalition_values, exact_shapley, shapley_interaction_values
 from .partial_dependence import (
     ice,
     ice_curves,
@@ -53,6 +55,10 @@ __all__ = [
     "anchor_explain",
     "kernel_shap",
     "sampling_shapley",
+    "exact_shapley",
+    "banzhaf_values",
+    "shapley_interaction_values",
+    "coalition_values",
     "integrated_gradients",
     "smoothgrad",
     "sage_values",

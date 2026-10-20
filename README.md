@@ -24,6 +24,7 @@ truth is known, so every explanation can be checked against reality.
 | LIME-style surrogate | Locally weighted linear fit around an instance | feature weights + intercept + local R2 | Ribeiro, Singh & Guestrin, "Why Should I Trust You?" (KDD, 2016) |
 | Interventional tree SHAP | Exact Shapley decomposition for one regression tree | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee, "A Unified Approach to Interpreting Model Predictions" (NeurIPS, 2017); Lundberg et al., "From Local Explanations to Global Understanding" (Nature MI, 2020) |
 | Kernel SHAP-lite | Model-agnostic Shapley values via coalition sampling + Shapley-kernel WLS | per-feature attributions summing to `prediction - baseline` | Lundberg & Lee (NeurIPS, 2017) |
+| Exact Shapley / Banzhaf / Shapley interaction values | Interventional value function `v(S) = mean_z f(x_S, z_~S)` evaluated on all `2^M` coalitions (M ≤ 12). Gives exact Shapley values, Banzhaf values, and the `M x M` Shapley interaction matrix (main effects on the diagonal, pairwise interactions split off-diagonal) | per-feature values summing exactly to `prediction - baseline`, an interaction matrix that sums to the same total, and the Banzhaf efficiency gap | Shapley (1953); Banzhaf (1965); Grabisch & Roubens, "An axiomatic approach to the concept of interaction among players in cooperative games" (IJGT, 1999); Lundberg et al., "From Local Explanations to Global Understanding with Explainable AI for Trees" (Nature MI, 2020) |
 | Permutation-sampling Shapley | Monte Carlo interventional Shapley values: average marginal contributions over random feature orderings, with absent features taken from real background rows; optional antithetic (reversed) permutations | per-feature attributions summing exactly to `prediction - baseline`, plus Monte Carlo standard errors | Štrumbelj & Kononenko, "Explaining prediction models and individual predictions with feature contributions" (KAIS, 2014); Mitchell et al., "Sampling Permutations for Shapley Value Estimation" (JMLR, 2022) |
 | Integrated Gradients | Path-integral of gradients from baseline→input (Riemann / finite-diff) | per-feature attributions summing to `f(x)-f(baseline)` | Sundararajan, Taly & Yan (ICML, 2017) |
 | SmoothGrad | Average finite-difference gradients over Gaussian-noised copies of the input | per-feature smoothed saliency | Smilkov et al., "SmoothGrad: removing noise by adding noise" (2017) |
@@ -384,4 +385,39 @@ model = lambda Z: Z.sum(axis=1)
 
 print(permutation_importance(model, X, y, seed=0)["mean"])              # x0, x1 look big
 print(conditional_permutation_importance(model, X, y, seed=0)["mean"])  # x0, x1 near 0
+```
+
+## Exact Shapley values and Shapley interaction values
+
+With a handful of features you don't need to sample. `exact_shapley`
+evaluates the interventional value function `v(S) = mean_z f(x_S, z_~S)` on
+**every** coalition, which takes `2^M * n_background` model rows in batched
+`predict` calls. That gives the exact values that `kernel_shap` and
+`sampling_shapley` estimate. It works for any black-box model and matches
+`tree_shap_values` for trees when the background is a single reference row.
+
+```python
+from interpretability import banzhaf_values, exact_shapley, shapley_interaction_values
+
+res = exact_shapley(model.predict, X[0], X[:50])
+res["values"].sum() == res["prediction"] - res["baseline"]   # exact efficiency
+
+inter = shapley_interaction_values(model.predict, X[0], X[:50], feature_names=names)
+inter["interactions"]        # M x M; rows sum to the Shapley values
+inter["main_effects"]        # diagonal: effect of each feature without its interactions
+inter["top_interactions"]    # [(a, b, Phi_ab + Phi_ba), ...] by magnitude
+
+banzhaf_values(model.predict, X[0], X[:50])["efficiency_gap"]
+```
+
+Off-diagonal entries split each pairwise interaction index equally between
+the two features, as in SHAP interaction values. For `f = x0 * x1` with one
+reference row `b`, the interaction is exactly `(x0 - b0)(x1 - b1)`. Banzhaf
+values weight every coalition equally rather than by size. They equal the
+Shapley values when the model has at most pairwise interactions, and stop
+summing to `f(x) - baseline` once higher-order interactions are present.
+Enumeration is capped at 12 features by default (`max_features`, hard cap 16).
+
+```bash
+python -m interpretability.cli exact-shapley --rows 0,1 --interactions --banzhaf
 ```
