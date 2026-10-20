@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage``, ``counterfactual``, ``prototypes`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``exact-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage``, ``counterfactual``, ``prototypes`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -17,6 +17,7 @@ from .counterfactual import growing_spheres_counterfactual
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import conditional_permutation_importance, loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
+from .shapley_exact import banzhaf_values, exact_shapley, shapley_interaction_values
 from .local import integrated_gradients, kernel_shap, lime_explain, sampling_shapley, smoothgrad
 from .partial_dependence import ice_curves, partial_dependence, partial_dependence_2d
 from .prototypes import mmd_critic
@@ -97,6 +98,20 @@ def build_parser():
     p_kshap = sub.add_parser("kernel-shap", help="Kernel SHAP-lite local attributions")
     p_kshap.add_argument("--rows", default="0,1", help="comma-separated row indices")
     p_kshap.add_argument("--n-samples", type=int, default=200, help="coalition samples per row")
+
+    p_es = sub.add_parser(
+        "exact-shapley",
+        help="exact Shapley / Banzhaf values and Shapley interaction values (coalition enumeration)",
+    )
+    p_es.add_argument("--rows", default="0", help="comma-separated row indices")
+    p_es.add_argument(
+        "--n-background", type=int, default=50, help="background rows (first N rows of the data)"
+    )
+    p_es.add_argument("--banzhaf", action="store_true", help="also print Banzhaf values")
+    p_es.add_argument(
+        "--interactions", action="store_true", help="also print the top pairwise interactions"
+    )
+    p_es.add_argument("--top", type=int, default=5, help="interaction pairs to print")
 
     p_ss = sub.add_parser(
         "sampling-shapley", help="permutation-sampling Shapley local attributions"
@@ -502,6 +517,45 @@ def _cmd_sampling_shapley(args):
     return 0
 
 
+def _cmd_exact_shapley(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    rows = _parse_indices(args.rows, "rows")
+    if args.n_background < 1:
+        sys.exit("--n-background must be positive")
+    background = X[: args.n_background]
+    for i in rows:
+        if i < 0 or i >= X.shape[0]:
+            sys.exit("row index %d out of range" % i)
+        try:
+            result = shapley_interaction_values(model.predict, X[i], background, feature_names=names)
+        except ValueError as exc:
+            sys.exit("exact-shapley: %s" % exc)
+        print(
+            "Exact Shapley for row %d (prediction %.4f, baseline %.4f, %d model evaluations):"
+            % (i, result["prediction"], result["baseline"], result["n_evaluations"])
+        )
+        banzhaf = None
+        if args.banzhaf:
+            banzhaf = banzhaf_values(model.predict, X[i], background, feature_names=names)
+        for j, val in enumerate(result["values"]):
+            line = "  %-6s phi %8.4f  main %8.4f" % (names[j], val, result["main_effects"][j])
+            if banzhaf is not None:
+                line += "  banzhaf %8.4f" % banzhaf["values"][j]
+            print(line)
+        print(
+            "  sum(phi)=%.4f  f(x)-baseline=%.4f"
+            % (float(np.sum(result["values"])), result["prediction"] - result["baseline"])
+        )
+        if banzhaf is not None:
+            print("  Banzhaf efficiency gap: %.4f" % banzhaf["efficiency_gap"])
+        if args.interactions:
+            print("  top pairwise interactions (Phi_ij + Phi_ji):")
+            for a, b, val in result["top_interactions"][: max(args.top, 0)]:
+                print("    %s x %s: %+.4f" % (a, b, val))
+    return 0
+
+
 def _cmd_integrated_gradients(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -731,6 +785,8 @@ def main(argv=None):
         return _cmd_kernel_shap(args)
     if args.command == "sampling-shapley":
         return _cmd_sampling_shapley(args)
+    if args.command == "exact-shapley":
+        return _cmd_exact_shapley(args)
     if args.command == "integrated-gradients":
         return _cmd_integrated_gradients(args)
     if args.command == "smoothgrad":
