@@ -162,6 +162,15 @@ def build_parser():
     p_proto.add_argument("--gamma", type=float, default=None, help="RBF bandwidth (default: median heuristic)")
     p_proto.add_argument("--no-regularizer", action="store_true", help="plain top-|witness| criticisms")
 
+    p_dv = sub.add_parser(
+        "data-values",
+        help="Truncated Monte Carlo data Shapley + leave-one-out values of training rows",
+    )
+    p_dv.add_argument("--n-train", type=int, default=60, help="training rows to value (rest = validation)")
+    p_dv.add_argument("--permutations", type=int, default=30, help="TMC permutations")
+    p_dv.add_argument("--truncation-tol", type=float, default=0.01, help="TMC truncation tolerance")
+    p_dv.add_argument("--top", type=int, default=5, help="rows to list at each end")
+
     p_report = sub.add_parser("report", help="write a markdown report")
     p_report.add_argument("--out", default="demo_report.md")
     return parser
@@ -763,6 +772,38 @@ def _cmd_prototypes(args):
     return 0
 
 
+def _cmd_data_values(args):
+    from .data_valuation import leave_one_out_values, make_utility, tmc_data_shapley
+
+    X, y, names = _load_data(args)
+    n_train = int(args.n_train)
+    if not 2 <= n_train < X.shape[0]:
+        sys.exit("--n-train must be between 2 and the number of rows - 1")
+    utility = make_utility(
+        _fit_predict, X[:n_train], y[:n_train], X[n_train:], y[n_train:], metric="r2", min_size=10
+    )
+    tmc = tmc_data_shapley(
+        utility, n_permutations=args.permutations, truncation_tol=args.truncation_tol, seed=args.seed
+    )
+    loo = leave_one_out_values(utility)
+    values = tmc["values"]
+    order = np.argsort(-values)
+    print(
+        "Data Shapley (TMC, %d permutations, %d fits): validation R2 full = %.4f, empty = %.4f"
+        % (tmc["n_permutations"], tmc["n_evaluations"], tmc["full_score"], tmc["empty_score"])
+    )
+    print("  sum of values = %.4f (~ full - empty; exact without truncation)" % values.sum())
+    top = max(1, int(args.top))
+    print("  %-6s %10s %10s %10s" % ("row", "shapley", "se", "loo"))
+    print("  most valuable:")
+    for i in order[:top]:
+        print("  %-6d %10.4f %10.4f %10.4f" % (i, values[i], tmc["std_error"][i], loo["values"][i]))
+    print("  least valuable (candidates for label noise / outliers):")
+    for i in order[::-1][:top]:
+        print("  %-6d %10.4f %10.4f %10.4f" % (i, values[i], tmc["std_error"][i], loo["values"][i]))
+    return 0
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "importance":
@@ -803,6 +844,8 @@ def main(argv=None):
         return _cmd_sage(args)
     if args.command == "prototypes":
         return _cmd_prototypes(args)
+    if args.command == "data-values":
+        return _cmd_data_values(args)
     if args.command == "report":
         return _cmd_report(args)
     return 0

@@ -12,6 +12,7 @@ plain callable ``predict(X) -> y``:
 * ``shapley_exact``: exact model-agnostic Shapley values, Banzhaf values and Shapley interaction values by coalition enumeration
 * ``counterfactual``: Growing Spheres counterfactual explanations (sparse, bounded, immutable-aware)
 * ``prototypes``: MMD-critic prototypes and criticisms (example-based data summaries)
+* ``data_valuation``: data Shapley (exact, truncated Monte Carlo), leave-one-out and exact K-NN Shapley values of training points
 * ``evaluate``: faithfulness checks for local explanations
 * ``report``: markdown report rendering
 * ``cli``: command-line interface over the above
@@ -23,6 +24,7 @@ from .ale import (
     ale,
     ale_2d,
 )
+from .data_valuation import exact_data_shapley, knn_shapley, knn_utility, leave_one_out_values, make_utility, tmc_data_shapley
 from .counterfactual import growing_spheres_counterfactual, sample_spherical_layer
 from .interaction import friedman_h_statistic, h_statistic
 from .importance import conditional_permutation_importance, morris_screening, morris_elementary_effects, sobol_first_order, sobol_total_order
@@ -41,6 +43,12 @@ from .partial_dependence import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "exact_data_shapley",
+    "knn_shapley",
+    "knn_utility",
+    "leave_one_out_values",
+    "make_utility",
+    "tmc_data_shapley",
     "accumulated_local_effects",
     "accumulated_local_effects_2d",
     "ale",
