@@ -421,3 +421,32 @@ Enumeration is capped at 12 features by default (`max_features`, hard cap 16).
 ```bash
 python -m interpretability.cli exact-shapley --rows 0,1 --interactions --banzhaf
 ```
+
+## Data valuation (data Shapley, TMC, leave-one-out, K-NN Shapley)
+
+Feature attributions explain predictions. Data valuation explains the **training set**. Each training row is treated as a player, and `U(S)` is the validation score of a model trained on the subset `S`. The Shapley value of that game is the row's worth (Ghorbani & Zou 2019; Jia et al. 2019). Rows with low or negative values are candidates for label noise, duplicates or outliers.
+
+```python
+from interpretability import (exact_data_shapley, knn_shapley, leave_one_out_values,
+                              make_utility, tmc_data_shapley)
+
+def fit_predict(X_fit, y_fit, X_eval):
+    return fit_decision_tree(X_fit, y_fit, max_depth=4).predict(X_eval)
+
+U = make_utility(fit_predict, X_tr, y_tr, X_val, y_val, metric="r2", min_size=10)
+tmc = tmc_data_shapley(U, n_permutations=100, truncation_tol=0.01, seed=0)
+tmc["values"], tmc["std_error"]           # values sum to U(N) - U(empty) per permutation
+leave_one_out_values(U)["values"]
+exact_data_shapley(U_small)["values"]     # 2^n fits; ground truth for n <= 14
+
+knn_shapley(X_tr, y_tr, X_val, y_val, k=5)["values"]   # exact, closed form, O(N log N) per val point
+```
+
+- `make_utility` wraps any `fit_predict` together with a metric: `accuracy`, `r2`, `neg_mse` or a callable. Subsets smaller than `min_size`, single-class subsets, and fits that fail all get a constant-baseline score.
+- `tmc_data_shapley` truncates each permutation once the running score is within `truncation_tol·|U(N)|` of the full-data score. It reports per-row standard errors and can stop early with `convergence_tol`.
+- `knn_shapley` implements the Jia et al. (2019) recursion for the unweighted K-NN classifier utility. It matches `exact_data_shapley(knn_utility(...))` to machine precision.
+
+```bash
+python -m interpretability.cli data-values --n-train 60 --permutations 30
+```
+
