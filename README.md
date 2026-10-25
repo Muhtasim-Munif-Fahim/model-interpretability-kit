@@ -450,3 +450,26 @@ knn_shapley(X_tr, y_tr, X_val, y_val, k=5)["values"]   # exact, closed form, O(N
 python -m interpretability.cli data-values --n-train 60 --permutations 30
 ```
 
+
+## Global surrogate trees and rule extraction
+
+`global_surrogate(predict, X, max_depth=3)` fits a shallow regression tree to the
+black box's *own predictions* and returns readable if-then rules (one per leaf,
+with repeated splits on a feature merged into the tightest interval), surrogate
+feature importances (SSE reduction shares), and **fidelity** to the black box —
+R², RMSE and, given a `threshold`, label agreement — on the fitting rows and
+optionally on held-out rows. `surrogate_depth_curve` shows the
+readability/fidelity trade-off across depths.
+
+```python
+from interpretability import format_rule, global_surrogate
+
+res = global_surrogate(model.predict, X_train, max_depth=3, X_test=X_test)
+print(res["fidelity"], res["test_fidelity"])
+for rule in res["rules"]:
+    print(format_rule(rule))
+```
+
+```bash
+python -m interpretability.cli --seed 42 surrogate --max-depth 3 --curve
+```

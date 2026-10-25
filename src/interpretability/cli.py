@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``exact-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage``, ``counterfactual``, ``prototypes`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``exact-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage``, ``counterfactual``, ``prototypes``, ``surrogate`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -23,6 +23,7 @@ from .partial_dependence import ice_curves, partial_dependence, partial_dependen
 from .prototypes import mmd_critic
 from .report import render_report
 from .sage import sage_values
+from .surrogate import format_rule, global_surrogate, surrogate_depth_curve
 
 __all__ = ["main", "build_parser"]
 
@@ -170,6 +171,12 @@ def build_parser():
     p_dv.add_argument("--permutations", type=int, default=30, help="TMC permutations")
     p_dv.add_argument("--truncation-tol", type=float, default=0.01, help="TMC truncation tolerance")
     p_dv.add_argument("--top", type=int, default=5, help="rows to list at each end")
+
+    p_sur = sub.add_parser("surrogate", help="global surrogate tree: if-then rules + fidelity to the black box")
+    p_sur.add_argument("--max-depth", type=int, default=3, help="surrogate tree depth (default 3)")
+    p_sur.add_argument("--min-leaf", type=int, default=10, help="minimum rows per leaf (default 10)")
+    p_sur.add_argument("--test-size", type=float, default=0.3, help="held-out share for test fidelity")
+    p_sur.add_argument("--curve", action="store_true", help="also print fidelity for depths 1..6")
 
     p_report = sub.add_parser("report", help="write a markdown report")
     p_report.add_argument("--out", default="demo_report.md")
@@ -772,6 +779,43 @@ def _cmd_prototypes(args):
     return 0
 
 
+def _cmd_surrogate(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    if not 0 <= args.test_size < 1:
+        sys.exit("--test-size must lie in [0, 1)")
+    rng = np.random.default_rng(args.seed)
+    order = rng.permutation(X.shape[0])
+    n_test = int(round(args.test_size * X.shape[0]))
+    test, train = order[:n_test], order[n_test:]
+    try:
+        res = global_surrogate(
+            model.predict, X[train], max_depth=args.max_depth, min_samples_leaf=args.min_leaf,
+            X_test=X[test] if n_test else None, feature_names=names,
+        )
+    except ValueError as exc:
+        sys.exit(str(exc))
+    fid = res["fidelity"]
+    line = "Global surrogate (depth %d, %d leaves): fidelity R^2 = %.4f, RMSE = %.4f" % (
+        res["max_depth"], res["n_leaves"], fid["r2"], fid["rmse"])
+    if res["test_fidelity"] is not None:
+        line += "; test R^2 = %.4f" % res["test_fidelity"]["r2"]
+    print(line)
+    print("Rules:")
+    for rule in res["rules"]:
+        print("  " + format_rule(rule))
+    print("Surrogate importances:")
+    for name, share in sorted(res["importances"].items(), key=lambda kv: -kv[1]):
+        print("  %-8s %.4f" % (name, share))
+    if args.curve:
+        print("Depth curve (depth, leaves, R^2, test R^2):")
+        for row in surrogate_depth_curve(model.predict, X[train], min_samples_leaf=args.min_leaf,
+                                         X_test=X[test] if n_test else None):
+            t = "%.4f" % row["test_r2"] if row["test_r2"] is not None else "-"
+            print("  %d %3d %.4f %s" % (row["max_depth"], row["n_leaves"], row["r2"], t))
+    return 0
+
+
 def _cmd_data_values(args):
     from .data_valuation import leave_one_out_values, make_utility, tmc_data_shapley
 
@@ -846,6 +890,8 @@ def main(argv=None):
         return _cmd_prototypes(args)
     if args.command == "data-values":
         return _cmd_data_values(args)
+    if args.command == "surrogate":
+        return _cmd_surrogate(args)
     if args.command == "report":
         return _cmd_report(args)
     return 0
