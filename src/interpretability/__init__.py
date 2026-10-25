@@ -4,6 +4,7 @@ This package provides global and local explanations for any model exposed as a
 plain callable ``predict(X) -> y``:
 
 * ``importance``: permutation, conditional permutation, drop-column, leave-one-covariate-out, Sobol first-order / total-order, and Morris screening
+* ``surrogate``: global surrogate trees with if-then rule extraction and fidelity
 * ``sage``: SAGE global importance (Shapley values of the model's loss)
 * ``partial_dependence``: 1-D/2-D partial dependence plots and ICE curves
 * ``ale``: 1-D/2-D accumulated local effects curves and interaction surfaces
@@ -31,6 +32,7 @@ from .importance import conditional_permutation_importance, morris_screening, mo
 from .local import anchor_explain, integrated_gradients, kernel_shap, sampling_shapley, smoothgrad
 from .prototypes import mmd_critic, mmd_squared, select_criticisms, select_prototypes, witness_function
 from .sage import sage_values
+from .surrogate import extract_rules, format_rule, global_surrogate, surrogate_depth_curve, surrogate_fidelity, surrogate_importances
 from .shapley_exact import banzhaf_values, coalition_values, exact_shapley, shapley_interaction_values
 from .partial_dependence import (
     ice,
@@ -43,6 +45,12 @@ from .partial_dependence import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "extract_rules",
+    "format_rule",
+    "global_surrogate",
+    "surrogate_depth_curve",
+    "surrogate_fidelity",
+    "surrogate_importances",
     "exact_data_shapley",
     "knn_shapley",
     "knn_utility",
