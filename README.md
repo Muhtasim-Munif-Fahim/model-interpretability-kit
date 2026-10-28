@@ -473,3 +473,35 @@ for rule in res["rules"]:
 ```bash
 python -m interpretability.cli --seed 42 surrogate --max-depth 3 --curve
 ```
+
+## Attribution quality metrics (deletion/insertion, infidelity, sensitivity)
+
+Kernel SHAP, sampling Shapley, Integrated Gradients and SmoothGrad often
+disagree on the same row. `interpretability.attribution_metrics` scores an
+attribution vector without ground truth:
+
+* `deletion_insertion(predict, x, phi, baseline)` — MoRF deletion and
+  insertion curves, their normalised areas, and AOPC (Samek et al. 2017;
+  Petsiuk et al. 2018). Faithful attributions give a low deletion area and a
+  high insertion area / AOPC.
+* `attribution_infidelity(predict, x, phi, perturbation="subset"|"gaussian")`
+  — explanation infidelity of Yeh et al. (NeurIPS 2019),
+  `E[(Iᵀφ − (f(x) − f(x − I)))²]`, plus the optimally rescaled variant.
+  Use `"subset"` (features switched to a baseline) for additive attributions
+  such as Shapley values / IG, and `"gaussian"` for gradient-type ones; both
+  give exactly zero for the correct attribution of a linear model.
+* `attribution_sensitivity(explain, x, radius)` — max-/avg-sensitivity
+  (Yeh et al. 2019) and a local Lipschitz estimate (Alvarez-Melis & Jaakkola
+  2018) of the explainer under small L∞ perturbations.
+
+```python
+from interpretability import attribution_infidelity, deletion_insertion, kernel_shap
+
+phi = kernel_shap(model.predict, X[0], X, seed=0)["values"]
+print(deletion_insertion(model.predict, X[0], phi, baseline=X)["aopc"])
+print(attribution_infidelity(model.predict, X[0], phi, baseline=X.mean(0), seed=0)["infidelity"])
+```
+
+```bash
+python -m interpretability.cli --seed 42 attribution-quality --rows 0,3
+```

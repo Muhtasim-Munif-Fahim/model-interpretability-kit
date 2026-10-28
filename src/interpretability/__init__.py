@@ -15,10 +15,12 @@ plain callable ``predict(X) -> y``:
 * ``prototypes``: MMD-critic prototypes and criticisms (example-based data summaries)
 * ``data_valuation``: data Shapley (exact, truncated Monte Carlo), leave-one-out and exact K-NN Shapley values of training points
 * ``evaluate``: faithfulness checks for local explanations
+* ``attribution_metrics``: deletion/insertion curves and AOPC, explanation infidelity, and max-sensitivity / local Lipschitz robustness of attributions
 * ``report``: markdown report rendering
 * ``cli``: command-line interface over the above
 """
 
+from .attribution_metrics import attribution_infidelity, attribution_sensitivity, deletion_insertion
 from .ale import (
     accumulated_local_effects,
     accumulated_local_effects_2d,
@@ -45,6 +47,9 @@ from .partial_dependence import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "attribution_infidelity",
+    "attribution_sensitivity",
+    "deletion_insertion",
     "extract_rules",
     "format_rule",
     "global_surrogate",
