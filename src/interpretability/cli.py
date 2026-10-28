@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``exact-shapley``, ``integrated-gradients``, ``smoothgrad``, ``sage``, ``counterfactual``, ``prototypes``, ``surrogate`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``exact-shapley``, ``integrated-gradients``, ``smoothgrad``, ``attribution-quality``, ``sage``, ``counterfactual``, ``prototypes``, ``surrogate`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -11,6 +11,7 @@ import sys
 
 import numpy as np
 
+from .attribution_metrics import attribution_infidelity, deletion_insertion
 from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .interaction import friedman_h_statistic
 from .counterfactual import growing_spheres_counterfactual
@@ -133,6 +134,14 @@ def build_parser():
     p_sg.add_argument("--rows", default="0,1", help="comma-separated row indices")
     p_sg.add_argument("--n-samples", type=int, default=50, help="noisy copies to average")
     p_sg.add_argument("--noise-sigma", type=float, default=0.1, help="Gaussian noise std")
+
+    p_aq = sub.add_parser(
+        "attribution-quality",
+        help="score Kernel SHAP / sampling Shapley / Integrated Gradients by deletion, insertion, AOPC and infidelity",
+    )
+    p_aq.add_argument("--rows", default="0,1", help="comma-separated row indices")
+    p_aq.add_argument("--n-perturb", type=int, default=200, help="perturbations for infidelity")
+    p_aq.add_argument("--order", choices=["signed", "abs"], default="signed", help="feature ranking for curves")
 
     p_sobol = sub.add_parser("sobol", help="Sobol first-order sensitivity indices")
     p_sobol.add_argument("--n-samples", type=int, default=512, help="Saltelli sample size N")
@@ -623,6 +632,35 @@ def _cmd_smoothgrad(args):
             print("  %-6s %8.4f" % (names[j], val))
     return 0
 
+def _cmd_attribution_quality(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    rows = _parse_indices(args.rows, "rows")
+    baseline = X.mean(axis=0)
+    explainers = [
+        ("kernel-shap", lambda r: kernel_shap(model.predict, r, X, n_samples=200, seed=args.seed)["values"]),
+        ("sampling-shapley", lambda r: sampling_shapley(model.predict, r, X, n_permutations=50, seed=args.seed)["values"]),
+        ("integrated-gradients", lambda r: integrated_gradients(model.predict, r, baseline=baseline)["values"]),
+    ]
+    for i in rows:
+        if i < 0 or i >= X.shape[0]:
+            sys.exit("row index %d out of range" % i)
+        print("Attribution quality for row %d (baseline = feature means):" % i)
+        print("  %-21s %9s %9s %9s %11s" % ("method", "del_auc", "ins_auc", "aopc", "infidelity"))
+        for label, fn in explainers:
+            phi = np.asarray(fn(X[i]), dtype=float)
+            curves = deletion_insertion(model.predict, X[i], phi, baseline=baseline, order=args.order)
+            infd = attribution_infidelity(
+                model.predict, X[i], phi, baseline=baseline, n_samples=args.n_perturb, seed=args.seed
+            )
+            print(
+                "  %-21s %9.4f %9.4f %9.4f %11.4f"
+                % (label, curves["deletion_auc"], curves["insertion_auc"], curves["aopc"], infd["infidelity"])
+            )
+    print("lower del_auc / infidelity and higher ins_auc / aopc indicate a more faithful attribution")
+    return 0
+
+
 def _cmd_report(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -876,6 +914,8 @@ def main(argv=None):
         return _cmd_integrated_gradients(args)
     if args.command == "smoothgrad":
         return _cmd_smoothgrad(args)
+    if args.command == "attribution-quality":
+        return _cmd_attribution_quality(args)
     if args.command == "counterfactual":
         return _cmd_counterfactual(args)
     if args.command == "sobol":
