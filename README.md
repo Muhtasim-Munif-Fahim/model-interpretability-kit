@@ -11,6 +11,7 @@ truth is known, so every explanation can be checked against reality.
 
 | Method | What it measures | Output | Reference |
 | --- | --- | --- | --- |
+| Explanation disagreement | Agreement between attribution methods: top-k feature, rank, sign and signed rank; Spearman; Kendall tau-b | methods x methods matrices per metric | Krishna et al., "The Disagreement Problem in Explainable Machine Learning" (2022) |
 | Permutation importance | Drop in model score when a feature's column is shuffled | mean ± std importance per feature | Fisher, Rudin & Dominici, "All Models are Wrong, but Many Are Useful" (JMLR, 2019); Breiman, "Random Forests" (2001) |
 | Drop-column importance | Drop in score when a feature is removed and the model is refit on the same rows | importance per feature | Same class of variable-importance measures |
 | Leave-one-covariate-out (LOCO) | Increase in held-out loss when a covariate is left out of the fit | mean ± std importance per feature | Lei, G'Sell, Rinaldo, Tibshirani & Wasserman, "Distribution-Free Predictive Inference for Regression" (JASA, 2018) |
@@ -504,4 +505,30 @@ print(attribution_infidelity(model.predict, X[0], phi, baseline=X.mean(0), seed=
 
 ```bash
 python -m interpretability.cli --seed 42 attribution-quality --rows 0,3
+```
+
+## Explanation disagreement (Krishna et al., 2022)
+
+Attribution methods often disagree about the same prediction. `interpretability.disagreement` measures how much, for any pair of attribution vectors. Each top-k metric ranks features by |phi| and returns a value in [0, 1]:
+
+| Metric | Meaning |
+| --- | --- |
+| `feature_agreement(a, b, k)` | share of top-k features both methods pick |
+| `rank_agreement(a, b, k)` | share of top-k positions that hold the same feature |
+| `sign_agreement(a, b, k)` | features in both top-k sets that also have the same sign |
+| `signed_rank_agreement(a, b, k)` | same feature, same rank, same sign |
+| `rank_correlation(a, b, features=None)` | Spearman correlation of the importance ranks |
+| `pairwise_rank_agreement(a, b, features=None)` | share of feature pairs ordered the same way |
+| `kendall_tau(a, b)` | Kendall tau-b with tie correction |
+
+```python
+from interpretability import explanation_disagreement
+out = explanation_disagreement({"shap": phi_shap, "ig": phi_ig, "lime": phi_lime}, k=3)
+out["matrices"]["feature_agreement"]   # (3, 3) averages over instances
+```
+
+The CLI compares Kernel SHAP, sampling Shapley, Integrated Gradients and SmoothGrad on the demo model:
+
+```bash
+python -m interpretability.cli --seed 42 explanation-disagreement --rows 0,3 --k 2
 ```

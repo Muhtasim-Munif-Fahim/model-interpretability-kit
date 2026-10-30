@@ -16,11 +16,23 @@ plain callable ``predict(X) -> y``:
 * ``data_valuation``: data Shapley (exact, truncated Monte Carlo), leave-one-out and exact K-NN Shapley values of training points
 * ``evaluate``: faithfulness checks for local explanations
 * ``attribution_metrics``: deletion/insertion curves and AOPC, explanation infidelity, and max-sensitivity / local Lipschitz robustness of attributions
+* ``disagreement``: explanation-disagreement metrics (top-k feature/rank/sign/signed-rank agreement, Spearman, pairwise rank agreement, Kendall tau-b) between attribution methods
 * ``report``: markdown report rendering
 * ``cli``: command-line interface over the above
 """
 
 from .attribution_metrics import attribution_infidelity, attribution_sensitivity, deletion_insertion
+from .disagreement import (
+    explanation_disagreement,
+    feature_agreement,
+    kendall_tau,
+    pairwise_rank_agreement,
+    rank_agreement,
+    rank_correlation,
+    sign_agreement,
+    signed_rank_agreement,
+    top_k_features,
+)
 from .ale import (
     accumulated_local_effects,
     accumulated_local_effects_2d,
@@ -47,6 +59,15 @@ from .partial_dependence import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "explanation_disagreement",
+    "feature_agreement",
+    "kendall_tau",
+    "pairwise_rank_agreement",
+    "rank_agreement",
+    "rank_correlation",
+    "sign_agreement",
+    "signed_rank_agreement",
+    "top_k_features",
     "attribution_infidelity",
     "attribution_sensitivity",
     "deletion_insertion",
