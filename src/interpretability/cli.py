@@ -2,7 +2,7 @@
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
 expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``morris``, ``pdp``,
-``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``exact-shapley``, ``integrated-gradients``, ``smoothgrad``, ``attribution-quality``, ``sage``, ``counterfactual``, ``prototypes``, ``surrogate`` and ``report``. All randomness is seeded through
+``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``exact-shapley``, ``integrated-gradients``, ``smoothgrad``, ``attribution-quality``, ``explanation-disagreement``, ``sage``, ``counterfactual``, ``prototypes``, ``surrogate`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
 
@@ -142,6 +142,13 @@ def build_parser():
     p_aq.add_argument("--rows", default="0,1", help="comma-separated row indices")
     p_aq.add_argument("--n-perturb", type=int, default=200, help="perturbations for infidelity")
     p_aq.add_argument("--order", choices=["signed", "abs"], default="signed", help="feature ranking for curves")
+
+    p_dis = sub.add_parser(
+        "explanation-disagreement",
+        help="pairwise agreement (top-k feature/rank/sign, Spearman, Kendall tau) between attribution methods",
+    )
+    p_dis.add_argument("--rows", default="0,1,2", help="comma-separated row indices")
+    p_dis.add_argument("--k", type=int, default=3, help="top-k size for the agreement metrics")
 
     p_sobol = sub.add_parser("sobol", help="Sobol first-order sensitivity indices")
     p_sobol.add_argument("--n-samples", type=int, default=512, help="Saltelli sample size N")
@@ -661,6 +668,37 @@ def _cmd_attribution_quality(args):
     return 0
 
 
+def _cmd_explanation_disagreement(args):
+    from .disagreement import explanation_disagreement
+
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    rows = _parse_indices(args.rows, "rows")
+    for i in rows:
+        if i < 0 or i >= X.shape[0]:
+            sys.exit("row index %d out of range" % i)
+    if not 1 <= args.k <= X.shape[1]:
+        sys.exit("--k must be between 1 and the number of features (%d)" % X.shape[1])
+    baseline = X.mean(axis=0)
+    methods = {
+        "kernel-shap": lambda r: kernel_shap(model.predict, r, X, n_samples=200, seed=args.seed)["values"],
+        "sampling-shapley": lambda r: sampling_shapley(model.predict, r, X, n_permutations=50, seed=args.seed)["values"],
+        "integrated-gradients": lambda r: integrated_gradients(model.predict, r, baseline=baseline)["values"],
+        "smoothgrad": lambda r: smoothgrad(model.predict, r, seed=args.seed)["values"],
+    }
+    attributions = {name: np.array([np.asarray(fn(X[i]), dtype=float) for i in rows]) for name, fn in methods.items()}
+    out = explanation_disagreement(attributions, k=args.k)
+    labels = out["methods"]
+    print("Explanation disagreement over rows %s (top-k = %d):" % (",".join(map(str, rows)), out["k"]))
+    for metric, M in out["matrices"].items():
+        print("%s:" % metric)
+        print("  %-21s " % "" + " ".join("%10s" % lab[:10] for lab in labels))
+        for lab, row in zip(labels, M):
+            print("  %-21s " % lab + " ".join("%10.3f" % v for v in row))
+    print("1.0 = full agreement; Kendall tau / Spearman range over [-1, 1]")
+    return 0
+
+
 def _cmd_report(args):
     X, y, names = _load_data(args)
     model = _fit(X, y, args.seed)
@@ -916,6 +954,8 @@ def main(argv=None):
         return _cmd_smoothgrad(args)
     if args.command == "attribution-quality":
         return _cmd_attribution_quality(args)
+    if args.command == "explanation-disagreement":
+        return _cmd_explanation_disagreement(args)
     if args.command == "counterfactual":
         return _cmd_counterfactual(args)
     if args.command == "sobol":
