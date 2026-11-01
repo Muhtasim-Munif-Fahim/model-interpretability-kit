@@ -188,6 +188,16 @@ def build_parser():
     p_dv.add_argument("--truncation-tol", type=float, default=0.01, help="TMC truncation tolerance")
     p_dv.add_argument("--top", type=int, default=5, help="rows to list at each end")
 
+    p_inf = sub.add_parser(
+        "influence",
+        help="influence functions of training rows for a ridge model, checked against exact leave-one-out",
+    )
+    p_inf.add_argument("--n-train", type=int, default=100, help="training rows (rest = test set)")
+    p_inf.add_argument("--l2", type=float, default=1.0, help="ridge penalty (default 1.0)")
+    p_inf.add_argument("--method", choices=["influence", "newton"], default="influence",
+                       help="first-order influence or Newton-step (exact for ridge)")
+    p_inf.add_argument("--top", type=int, default=5, help="rows to list at each end")
+
     p_sur = sub.add_parser("surrogate", help="global surrogate tree: if-then rules + fidelity to the black box")
     p_sur.add_argument("--max-depth", type=int, default=3, help="surrogate tree depth (default 3)")
     p_sur.add_argument("--min-leaf", type=int, default=10, help="minimum rows per leaf (default 10)")
@@ -924,6 +934,41 @@ def _cmd_data_values(args):
     return 0
 
 
+def _cmd_influence(args):
+    from .influence import influence_functions, loo_refit
+
+    X, y, names = _load_data(args)
+    n_train = int(args.n_train)
+    if not X.shape[1] + 2 <= n_train < X.shape[0]:
+        sys.exit("--n-train must be between n_features + 2 and the number of rows - 1")
+    if args.l2 < 0:
+        sys.exit("--l2 must be non-negative")
+    Xtr, ytr, Xte, yte = X[:n_train], y[:n_train], X[n_train:], y[n_train:]
+    try:
+        est = influence_functions(Xtr, ytr, "squared", args.l2, Xte, yte, method=args.method)
+    except ValueError as exc:
+        sys.exit("influence: %s" % exc)
+    exact = loo_refit(Xtr, ytr, "squared", args.l2, Xte, yte)
+    m_est, m_ex = est["mean_test_loss_change"], exact["mean_test_loss_change"]
+    corr = float(np.corrcoef(m_est, m_ex)[0, 1]) if np.std(m_ex) > 0 else float("nan")
+    print("Influence functions (ridge, l2=%g, method=%s): %d train rows, %d test rows"
+          % (args.l2, args.method, n_train, Xte.shape[0]))
+    print("  max |param change - exact LOO| = %.3g; corr(estimated, exact mean test-loss change) = %.4f"
+          % (np.abs(est["param_change"] - exact["param_change"]).max(), corr))
+    order = np.argsort(m_est)
+    top = max(1, int(args.top))
+    print("  %-6s %12s %12s %10s %10s" % ("row", "est dLoss", "exact dLoss", "self-infl", "cook"))
+    print("  most harmful (removing lowers test loss):")
+    for i in order[:top]:
+        print("  %-6d %12.5f %12.5f %10.4f %10.4f"
+              % (i, m_est[i], m_ex[i], est["self_influence"][i], est["cooks_distance"][i]))
+    print("  most helpful (removing raises test loss):")
+    for i in order[::-1][:top]:
+        print("  %-6d %12.5f %12.5f %10.4f %10.4f"
+              % (i, m_est[i], m_ex[i], est["self_influence"][i], est["cooks_distance"][i]))
+    return 0
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "importance":
@@ -970,6 +1015,8 @@ def main(argv=None):
         return _cmd_prototypes(args)
     if args.command == "data-values":
         return _cmd_data_values(args)
+    if args.command == "influence":
+        return _cmd_influence(args)
     if args.command == "surrogate":
         return _cmd_surrogate(args)
     if args.command == "report":
