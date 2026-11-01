@@ -33,6 +33,7 @@ truth is known, so every explanation can be checked against reality.
 | Sobol total-order | Fraction of variance from a feature and all its interactions (`1 - Var(E[Y|X_~i])/Var(Y)`) | `ST` (and optional `S1`) per feature in `[0, 1]` | Sobol (1993); Jansen / Saltelli pick-freeze |
 | Growing Spheres counterfactuals | Smallest (standardized L2) change to an instance that moves its prediction into a target interval / class, found by sampling spherical layers outward, then sparsified by resetting features | counterfactual point, changed features, deltas, distance, evaluations | Laugel, Lesot, Marsala, Renard & Detyniecki, "Inverse Classification for Comparison-based Interpretability in Machine Learning" (2018); Wachter, Mittelstadt & Russell, "Counterfactual Explanations without Opening the Black Box" (Harvard JOLT, 2018) |
 | MMD-critic prototypes & criticisms | Greedy rows whose empirical distribution minimizes RBF-kernel MMD to the data (prototypes), plus rows with the largest witness-function magnitude under a log-det diversity term (criticisms); optional per-class prototype allocation | row indices, witness values, MMD^2, coverage per prototype | Kim, Khanna & Koyejo, "Examples are not Enough, Learn to Criticize! Criticism for Interpretability" (NeurIPS, 2016) |
+| Influence functions | Effect of removing one training row on the parameters and on test losses of a ridge / L2-logistic model, estimated from the fitted model's Hessian. Supports first-order (`H^-1 g_i`) and Newton-step leave-one-out (exact for ridge) estimates, self-influence, leverage and Cook's distance, all checked against refitting | `(n, p)` parameter changes, `(n, m)` test-loss changes, per-row diagnostics | Cook & Weisberg, *Residuals and Influence in Regression* (1982); Pregibon, "Logistic Regression Diagnostics" (Annals of Statistics, 1981); Koh & Liang, "Understanding Black-box Predictions via Influence Functions" (ICML, 2017) |
 | Faithfulness checks | Local surrogate R2; top-feature overlap between local and global attributions | per-instance numbers | Molnar, "Interpretable Machine Learning" (2022) |
 
 The broader conceptual framework and caveats are described in Christoph
@@ -451,6 +452,30 @@ knn_shapley(X_tr, y_tr, X_val, y_val, k=5)["values"]   # exact, closed form, O(N
 python -m interpretability.cli data-values --n-train 60 --permutations 30
 ```
 
+
+## Influence functions (training-row influence without refitting)
+
+For ridge and L2-regularised logistic regression, `influence_functions`
+estimates what happens to the fitted parameters, and to the loss on each test
+point, when a training row is removed. It needs one Hessian solve instead of
+`n` refits. `method="influence"` is the first-order Koh & Liang estimate
+`H^-1 g_i`. `method="newton"` downdates the Hessian with Sherman–Morrison,
+which gives the exact leave-one-out solution for ridge and a close one-step
+approximation for logistic regression. `loo_refit` is the brute-force ground
+truth.
+
+```python
+from interpretability import influence_functions, loo_refit
+
+est = influence_functions(X_tr, y_tr, loss="squared", l2=1.0, X_test=X_te, y_test=y_te)
+est["mean_test_loss_change"]      # > 0: row helps (removing it raises test loss); < 0: row hurts
+est["self_influence"], est["leverage"], est["cooks_distance"]
+exact = loo_refit(X_tr, y_tr, loss="squared", l2=1.0, X_test=X_te, y_test=y_te)
+```
+
+```bash
+python -m interpretability.cli influence --n-train 100 --l2 1.0 --method newton
+```
 
 ## Global surrogate trees and rule extraction
 

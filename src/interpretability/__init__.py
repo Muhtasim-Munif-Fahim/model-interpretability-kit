@@ -14,6 +14,7 @@ plain callable ``predict(X) -> y``:
 * ``counterfactual``: Growing Spheres counterfactual explanations (sparse, bounded, immutable-aware)
 * ``prototypes``: MMD-critic prototypes and criticisms (example-based data summaries)
 * ``data_valuation``: data Shapley (exact, truncated Monte Carlo), leave-one-out and exact K-NN Shapley values of training points
+* ``influence``: influence functions and Newton-step leave-one-out estimates for ridge / L2 logistic regression, with refit-based ground truth
 * ``evaluate``: faithfulness checks for local explanations
 * ``attribution_metrics``: deletion/insertion curves and AOPC, explanation infidelity, and max-sensitivity / local Lipschitz robustness of attributions
 * ``disagreement``: explanation-disagreement metrics (top-k feature/rank/sign/signed-rank agreement, Spearman, pairwise rank agreement, Kendall tau-b) between attribution methods
@@ -40,6 +41,7 @@ from .ale import (
     ale_2d,
 )
 from .data_valuation import exact_data_shapley, knn_shapley, knn_utility, leave_one_out_values, make_utility, tmc_data_shapley
+from .influence import fit_regularized_glm, influence_functions, loo_refit
 from .counterfactual import growing_spheres_counterfactual, sample_spherical_layer
 from .interaction import friedman_h_statistic, h_statistic
 from .importance import conditional_permutation_importance, morris_screening, morris_elementary_effects, sobol_first_order, sobol_total_order
