@@ -3,7 +3,7 @@
 This package provides global and local explanations for any model exposed as a
 plain callable ``predict(X) -> y``:
 
-* ``importance``: permutation, conditional permutation, drop-column, leave-one-covariate-out, Sobol first-order / total-order, and Morris screening
+* ``importance``: permutation, grouped permutation, conditional permutation, drop-column, leave-one-covariate-out, Sobol first-order / total-order, and Morris screening
 * ``surrogate``: global surrogate trees with if-then rule extraction and fidelity
 * ``sage``: SAGE global importance (Shapley values of the model's loss)
 * ``partial_dependence``: 1-D/2-D partial dependence plots and ICE curves
@@ -44,7 +44,7 @@ from .data_valuation import exact_data_shapley, knn_shapley, knn_utility, leave_
 from .influence import fit_regularized_glm, influence_functions, loo_refit
 from .counterfactual import growing_spheres_counterfactual, sample_spherical_layer
 from .interaction import friedman_h_statistic, h_statistic
-from .importance import conditional_permutation_importance, morris_screening, morris_elementary_effects, sobol_first_order, sobol_total_order
+from .importance import conditional_permutation_importance, grouped_permutation_importance, morris_screening, morris_elementary_effects, sobol_first_order, sobol_total_order
 from .local import anchor_explain, integrated_gradients, kernel_shap, sampling_shapley, smoothgrad
 from .prototypes import mmd_critic, mmd_squared, select_criticisms, select_prototypes, witness_function
 from .sage import sage_values
@@ -61,6 +61,7 @@ from .partial_dependence import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "grouped_permutation_importance",
     "explanation_disagreement",
     "feature_agreement",
     "kendall_tau",

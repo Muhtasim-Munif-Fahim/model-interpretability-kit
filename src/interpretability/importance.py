@@ -177,6 +177,98 @@ def permutation_importance(predict, X, y, metric=None, n_repeats=5, seed=None):
     }
 
 
+def _normalize_groups(groups, n_features):
+    """Return ``(names, [index arrays])`` for a dict or sequence of feature groups."""
+    if isinstance(groups, dict):
+        items = list(groups.items())
+    else:
+        items = [("g%d" % i, g) for i, g in enumerate(groups)]
+    if not items:
+        raise ValueError("groups must contain at least one group")
+    names, index_sets = [], []
+    for name, cols in items:
+        if np.isscalar(cols):
+            cols = [cols]
+        cols = [check_feature_index(c, n_features) for c in cols]
+        if not cols:
+            raise ValueError("group %r is empty" % (name,))
+        if len(set(cols)) != len(cols):
+            raise ValueError("group %r repeats a feature index" % (name,))
+        names.append(name)
+        index_sets.append(np.asarray(cols, dtype=int))
+    return names, index_sets
+
+
+def grouped_permutation_importance(predict, X, y, groups, metric=None, n_repeats=5, seed=None):
+    """Permutation importance of *groups* of features shuffled jointly.
+
+    Each group's columns are permuted with the **same** row permutation, so
+    the dependence inside the group is kept while its link to the target and
+    to the other features is broken. This is the usual remedy when features
+    are strongly correlated (one-hot blocks, lagged copies, sensor clusters):
+    single-feature permutation spreads, and often hides, importance that a
+    group carries together (Gregorutti, Michel & Saint-Pierre, "Grouped
+    variable importance with random forests and application to multiple
+    functional data analysis", CSDA 2015; Au et al., "Grouped feature
+    importance and combined features effect plot", DMKD 2022).
+
+    Parameters
+    ----------
+    predict : callable
+        ``predict(X) -> y_pred`` where ``X`` is a 2-D array.
+    X, y : ndarray
+        Feature matrix and target vector.
+    groups : dict or sequence
+        ``{name: [column indices]}``, or a sequence of index lists (named
+        ``g0``, ``g1``, ...). Groups may overlap; a single int is a group of
+        one, so ``groups=range(n_features)`` reproduces
+        :func:`permutation_importance` draw for draw with the same seed.
+    metric : callable or None
+        ``metric(y_true, y_pred) -> float``, higher is better (default R2).
+    n_repeats : int
+        Number of joint permutations per group.
+    seed : int or None
+        Random seed controlling the permutations.
+
+    Returns
+    -------
+    dict
+        ``{"groups": list of names, "columns": list of index lists,
+        "mean": ndarray (n_groups,), "std": ndarray (n_groups,),
+        "scores": ndarray (n_groups, n_repeats), "baseline": float,
+        "n_repeats": int}``.
+    """
+    X = as_2d(X)
+    y = as_1d(y, X.shape[0])
+    if int(n_repeats) != n_repeats or n_repeats < 1:
+        raise ValueError("n_repeats must be at least 1")
+    n_repeats = int(n_repeats)
+    names, index_sets = _normalize_groups(groups, X.shape[1])
+    metric = _metric_or_default(metric)
+    baseline = float(metric(y, predict(X)))
+    rng = np.random.default_rng(seed)
+    n = X.shape[0]
+    scores = np.empty((len(names), n_repeats))
+    for g, cols in enumerate(index_sets):
+        block = X[:, cols].copy()
+        for r in range(n_repeats):
+            X_perm = X.copy()
+            if cols.size == 1:
+                X_perm[:, cols[0]] = rng.permutation(block[:, 0])
+            else:
+                X_perm[:, cols] = block[rng.permutation(n)]
+            scores[g, r] = float(metric(y, predict(X_perm)))
+    return {
+        "groups": names,
+        "columns": [c.tolist() for c in index_sets],
+        "mean": baseline - scores.mean(axis=1),
+        "std": scores.std(axis=1),
+        "scores": scores,
+        "baseline": baseline,
+        "n_repeats": n_repeats,
+    }
+
+
 def _residual_sampler(X, j):
     """Least-squares fit of column ``j`` on the others: fitted values and residuals."""
     design = np.column_stack([np.ones(X.shape[0]), np.delete(X, j, axis=1)])
