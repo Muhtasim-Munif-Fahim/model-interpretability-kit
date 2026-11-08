@@ -4,6 +4,7 @@ This package provides global and local explanations for any model exposed as a
 plain callable ``predict(X) -> y``:
 
 * ``importance``: permutation, grouped permutation, conditional permutation, drop-column, leave-one-covariate-out, Sobol first-order / total-order, and Morris screening
+* ``dependence_sensitivity``: moment-independent global sensitivity — HSIC / R2-HSIC indices with permutation independence tests and given-data Borgonovo delta
 * ``surrogate``: global surrogate trees with if-then rule extraction and fidelity
 * ``sage``: SAGE global importance (Shapley values of the model's loss)
 * ``partial_dependence``: 1-D/2-D partial dependence plots and ICE curves
@@ -40,6 +41,7 @@ from .ale import (
     ale,
     ale_2d,
 )
+from .dependence_sensitivity import borgonovo_delta, hsic, hsic_sensitivity
 from .data_valuation import exact_data_shapley, knn_shapley, knn_utility, leave_one_out_values, make_utility, tmc_data_shapley
 from .influence import fit_regularized_glm, influence_functions, loo_refit
 from .counterfactual import growing_spheres_counterfactual, sample_spherical_layer
@@ -61,6 +63,9 @@ from .partial_dependence import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "borgonovo_delta",
+    "hsic",
+    "hsic_sensitivity",
     "grouped_permutation_importance",
     "explanation_disagreement",
     "feature_agreement",
