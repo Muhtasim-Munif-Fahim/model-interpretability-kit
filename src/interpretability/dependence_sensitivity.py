@@ -18,13 +18,17 @@ design), so they also work on observational data with dependent inputs:
   estimated from given data by partitioning ``X_j`` into quantile classes and
   comparing Gaussian KDEs of ``Y`` on a common grid (Plischke, Borgonovo &
   Smith 2013). An optional bootstrap gives a bias estimate and percentile CI.
+* :func:`pawn_indices` – the given-data PAWN index (Pianosi & Wagener 2015,
+  2018): a summary (median by default) of Kolmogorov–Smirnov distances
+  between the unconditional output CDF and CDFs conditional on
+  equal-probability slices of ``X_j``, with a dummy-input noise floor.
 """
 
 import numpy as np
 
 from ._utils import as_2d
 
-__all__ = ["hsic", "hsic_sensitivity", "borgonovo_delta"]
+__all__ = ["hsic", "hsic_sensitivity", "borgonovo_delta", "pawn_indices"]
 
 
 def _as_column(v, name):
@@ -236,4 +240,145 @@ def borgonovo_delta(predict, X, y=None, n_classes=None, n_grid=256, n_bootstrap=
         out["delta_bc"] = np.clip(2.0 * delta - boots.mean(axis=0), 0.0, 1.0)
         out["ci_low"] = np.percentile(boots, 2.5, axis=0)
         out["ci_high"] = np.percentile(boots, 97.5, axis=0)
+    return out
+
+
+_PAWN_STATS = ("median", "mean", "max", "min")
+
+
+def _ks_to_reference(y_sorted, y_sub):
+    """Two-sample KS distance between the full output sample and a subsample.
+
+    Both empirical CDFs are evaluated on the pooled support (the full sample
+    contains the subsample), so the supremum is attained at a data point.
+    """
+    sub = np.sort(y_sub)
+    n, m = y_sorted.size, sub.size
+    f_all = np.searchsorted(y_sorted, y_sorted, side="right") / n
+    f_sub = np.searchsorted(sub, y_sorted, side="right") / m
+    return float(np.max(np.abs(f_all - f_sub)))
+
+
+def _pawn_slices(xj, n_classes):
+    """Equal-probability slices of one feature (ties kept in one slice)."""
+    edges = np.quantile(xj, np.linspace(0.0, 1.0, n_classes + 1)[1:-1])
+    labels = np.searchsorted(edges, xj, side="right")
+    return [np.flatnonzero(labels == k) for k in range(n_classes)]
+
+
+def _pawn_one(xj, y, y_sorted, n_classes, min_slice):
+    ks = []
+    for idx in _pawn_slices(xj, n_classes):
+        if idx.size >= min_slice:
+            ks.append(_ks_to_reference(y_sorted, y[idx]))
+    return np.asarray(ks, dtype=float)
+
+
+def _summarize(ks, stat):
+    if ks.size == 0:
+        return float("nan")
+    return float(getattr(np, stat)(ks))
+
+
+def pawn_indices(
+    predict,
+    X,
+    y=None,
+    n_classes=10,
+    stat="median",
+    min_slice=5,
+    n_bootstrap=0,
+    seed=None,
+):
+    """Given-data PAWN density-based sensitivity indices.
+
+    PAWN (Pianosi & Wagener 2015, given-data form 2018) compares the
+    unconditional output CDF ``F_Y`` with conditional CDFs ``F_{Y | X_j in
+    I_k}`` obtained by slicing feature ``j`` into ``n_classes``
+    equal-probability intervals ``I_k``. For each slice the Kolmogorov–Smirnov
+    distance ``KS_jk = sup_y |F_Y(y) - F_{Y|I_k}(y)|`` is computed, and the
+    index is a summary of ``KS_j1 .. KS_jK`` (``stat``: median by default, or
+    mean / max / min). Like Borgonovo's delta it reacts to *any* change in the
+    output distribution, but it uses CDFs instead of densities, so it needs
+    no bandwidth and is robust for skewed or heavy-tailed outputs.
+
+    Because a finite slice never matches the full sample exactly, PAWN
+    indices are positive even for irrelevant features. The result therefore
+    includes a ``dummy`` index computed the same way for an independent
+    random input (a noise floor for screening): features whose index does not
+    clearly exceed ``dummy`` can be treated as non-influential.
+
+    Parameters
+    ----------
+    predict : callable or None
+        Model ``predict(X)``; ignored when ``y`` (model outputs) is given.
+    X : array-like of shape (n, d)
+    y : array-like of shape (n,), optional
+        Precomputed outputs.
+    n_classes : int
+        Number of equal-probability slices per feature (>= 2).
+    stat : {"median", "mean", "max", "min"}
+        Summary of the per-slice KS statistics reported as ``index``.
+    min_slice : int
+        Slices with fewer rows (e.g. after heavy ties) are dropped.
+    n_bootstrap : int
+        If positive, rows are resampled to give 95% percentile intervals.
+    seed : int, optional
+
+    Returns
+    -------
+    dict
+        ``index`` (d,), ``median``, ``mean``, ``max``, ``min`` (d,) summaries,
+        ``ks`` (list of per-slice KS arrays), ``dummy`` (float), ``stat``,
+        ``n_classes``; plus ``ci_low`` / ``ci_high`` when bootstrapping.
+    """
+    X = as_2d(X)
+    if stat not in _PAWN_STATS:
+        raise ValueError("stat must be one of %s" % (_PAWN_STATS,))
+    if y is None:
+        if predict is None:
+            raise ValueError("pass predict or y")
+        y = np.asarray(predict(X), dtype=float).ravel()
+    else:
+        y = np.asarray(y, dtype=float).ravel()
+    n, d = X.shape
+    if y.shape[0] != n:
+        raise ValueError("output must have one value per row")
+    if not np.all(np.isfinite(y)):
+        raise ValueError("outputs contain non-finite values")
+    n_classes = int(n_classes)
+    if n_classes < 2:
+        raise ValueError("n_classes must be at least 2")
+    min_slice = int(min_slice)
+    if min_slice < 1:
+        raise ValueError("min_slice must be positive")
+    if n < n_classes * min_slice:
+        raise ValueError("need at least n_classes * min_slice rows")
+
+    rng = np.random.default_rng(seed)
+    y_sorted = np.sort(y)
+    ks = [_pawn_one(X[:, j], y, y_sorted, n_classes, min_slice) for j in range(d)]
+    summaries = {s: np.array([_summarize(k, s) for k in ks]) for s in _PAWN_STATS}
+    dummy_x = rng.random(n)
+    dummy = _summarize(_pawn_one(dummy_x, y, y_sorted, n_classes, min_slice), stat)
+    out = {
+        "index": summaries[stat].copy(),
+        "ks": ks,
+        "dummy": dummy,
+        "stat": stat,
+        "n_classes": n_classes,
+    }
+    out.update(summaries)
+    if n_bootstrap:
+        boots = np.empty((int(n_bootstrap), d))
+        for b in range(int(n_bootstrap)):
+            idx = rng.integers(0, n, n)
+            yb = y[idx]
+            yb_sorted = np.sort(yb)
+            boots[b] = [
+                _summarize(_pawn_one(X[idx, j], yb, yb_sorted, n_classes, min_slice), stat)
+                for j in range(d)
+            ]
+        out["ci_low"] = np.nanpercentile(boots, 2.5, axis=0)
+        out["ci_high"] = np.nanpercentile(boots, 97.5, axis=0)
     return out
