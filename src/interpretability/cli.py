@@ -1,7 +1,7 @@
 """Command-line interface for the interpretability toolkit.
 
 Subcommands build a demo decision tree on synthetic (or CSV) data and then
-expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``hsic``, ``morris``, ``pdp``,
+expose a single explanation type each: ``importance``, ``conditional-importance``, ``loco``, ``sobol``, ``sobol-total``, ``hsic``, ``pawn``, ``morris``, ``pdp``,
 ``ice``, ``ale``, ``h-statistic``, ``explain``, ``kernel-shap``, ``sampling-shapley``, ``exact-shapley``, ``integrated-gradients``, ``smoothgrad``, ``attribution-quality``, ``explanation-disagreement``, ``sage``, ``counterfactual``, ``prototypes``, ``surrogate`` and ``report``. All randomness is seeded through
 ``--seed`` so runs are reproducible.
 """
@@ -15,7 +15,7 @@ from .attribution_metrics import attribution_infidelity, deletion_insertion
 from .ale import accumulated_local_effects, accumulated_local_effects_2d
 from .interaction import friedman_h_statistic
 from .counterfactual import growing_spheres_counterfactual
-from .dependence_sensitivity import borgonovo_delta, hsic_sensitivity
+from .dependence_sensitivity import borgonovo_delta, hsic_sensitivity, pawn_indices
 from .demo_model import fit_decision_tree, make_synthetic_data
 from .evaluate import top_feature_overlap
 from .importance import conditional_permutation_importance, loco_importance, morris_screening, permutation_importance, sobol_first_order, sobol_total_order
@@ -160,6 +160,11 @@ def build_parser():
     p_hsic = sub.add_parser("hsic", help="HSIC / R2-HSIC and Borgonovo delta moment-independent sensitivity")
     p_hsic.add_argument("--n-permutations", type=int, default=199, help="permutations for the HSIC independence test")
     p_hsic.add_argument("--max-rows", type=int, default=500, help="row subsample cap for the O(n^2) Gram matrices")
+
+    p_pawn = sub.add_parser("pawn", help="PAWN (KS-based, given-data) distributional sensitivity indices")
+    p_pawn.add_argument("--n-classes", type=int, default=10, help="equal-probability slices per feature")
+    p_pawn.add_argument("--stat", default="median", choices=("median", "mean", "max", "min"))
+    p_pawn.add_argument("--n-bootstrap", type=int, default=0, help="bootstrap resamples for 95%% CIs")
 
     p_morris = sub.add_parser("morris", help="Morris elementary-effects screening")
     p_morris.add_argument("--n-trajectories", type=int, default=20, help="number of Morris trajectories")
@@ -478,6 +483,24 @@ def _cmd_hsic(args):
     for j in order:
         pv = res["p_values"][j] if res["p_values"] is not None else float("nan")
         print("  %-6s %10.4f %10.4f %10.4f" % (names[j], res["r2_hsic"][j], pv, delta[j]))
+    return 0
+
+
+def _cmd_pawn(args):
+    X, y, names = _load_data(args)
+    model = _fit(X, y, args.seed)
+    res = pawn_indices(
+        model.predict, X, n_classes=args.n_classes, stat=args.stat, n_bootstrap=args.n_bootstrap, seed=args.seed
+    )
+    order = np.argsort(-res["index"])
+    print("PAWN sensitivity (%s of %d slice KS distances; dummy floor = %.4f):" % (res["stat"], res["n_classes"], res["dummy"]))
+    for j in order:
+        line = "  %-6s %8.4f" % (names[j], res["index"][j])
+        if "ci_low" in res:
+            line += "  [%.4f, %.4f]" % (res["ci_low"][j], res["ci_high"][j])
+        if res["index"][j] <= res["dummy"]:
+            line += "  (below dummy)"
+        print(line)
     return 0
 
 
@@ -1030,6 +1053,8 @@ def main(argv=None):
         return _cmd_sobol_total(args)
     if args.command == "hsic":
         return _cmd_hsic(args)
+    if args.command == "pawn":
+        return _cmd_pawn(args)
     if args.command == "morris":
         return _cmd_morris(args)
     if args.command == "sage":
