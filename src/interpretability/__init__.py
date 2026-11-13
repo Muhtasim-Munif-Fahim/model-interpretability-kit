@@ -49,6 +49,7 @@ from .interaction import friedman_h_statistic, h_statistic
 from .importance import conditional_permutation_importance, grouped_permutation_importance, morris_screening, morris_elementary_effects, sobol_first_order, sobol_total_order
 from .local import anchor_explain, integrated_gradients, kernel_shap, sampling_shapley, smoothgrad
 from .prototypes import mmd_critic, mmd_squared, select_criticisms, select_prototypes, witness_function
+from .rulefit import extract_tree_rules, format_rulefit_rule, lasso_coordinate_descent, rule_matrix, rulefit
 from .sage import sage_values
 from .surrogate import extract_rules, format_rule, global_surrogate, surrogate_depth_curve, surrogate_fidelity, surrogate_importances
 from .shapley_exact import banzhaf_values, coalition_values, exact_shapley, shapley_interaction_values
@@ -86,6 +87,11 @@ __all__ = [
     "surrogate_depth_curve",
     "surrogate_fidelity",
     "surrogate_importances",
+    "rulefit",
+    "extract_tree_rules",
+    "rule_matrix",
+    "lasso_coordinate_descent",
+    "format_rulefit_rule",
     "exact_data_shapley",
     "knn_shapley",
     "knn_utility",
