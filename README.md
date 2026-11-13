@@ -38,6 +38,7 @@ truth is known, so every explanation can be checked against reality.
 | Growing Spheres counterfactuals | Smallest (standardized L2) change to an instance that moves its prediction into a target interval / class, found by sampling spherical layers outward, then sparsified by resetting features | counterfactual point, changed features, deltas, distance, evaluations | Laugel, Lesot, Marsala, Renard & Detyniecki, "Inverse Classification for Comparison-based Interpretability in Machine Learning" (2018); Wachter, Mittelstadt & Russell, "Counterfactual Explanations without Opening the Black Box" (Harvard JOLT, 2018) |
 | MMD-critic prototypes & criticisms | Greedy rows whose empirical distribution minimizes RBF-kernel MMD to the data (prototypes), plus rows with the largest witness-function magnitude under a log-det diversity term (criticisms); optional per-class prototype allocation | row indices, witness values, MMD^2, coverage per prototype | Kim, Khanna & Koyejo, "Examples are not Enough, Learn to Criticize! Criticism for Interpretability" (NeurIPS, 2016) |
 | Influence functions | Effect of removing one training row on the parameters and on test losses of a ridge / L2-logistic model, estimated from the fitted model's Hessian. Supports first-order (`H^-1 g_i`) and Newton-step leave-one-out (exact for ridge) estimates, self-influence, leverage and Cook's distance, all checked against refitting | `(n, p)` parameter changes, `(n, m)` test-loss changes, per-row diagnostics | Cook & Weisberg, *Residuals and Influence in Regression* (1982); Pregibon, "Logistic Regression Diagnostics" (Annals of Statistics, 1981); Koh & Liang, "Understanding Black-box Predictions via Influence Functions" (ICML, 2017) |
+| RuleFit | Lasso on rules extracted from a boosted tree ensemble plus winsorised linear terms; rule / linear / feature importances | sparse rule list + coefficients, `predict` | Friedman & Popescu, "Predictive learning via rule ensembles" (Ann. Appl. Stat., 2008) |
 | Faithfulness checks | Local surrogate R2; top-feature overlap between local and global attributions | per-instance numbers | Molnar, "Interpretable Machine Learning" (2022) |
 
 The broader conceptual framework and caveats are described in Christoph
@@ -526,6 +527,28 @@ for rule in res["rules"]:
 
 ```bash
 python -m interpretability.cli --seed 42 surrogate --max-depth 3 --curve
+```
+
+## RuleFit (sparse rule ensembles)
+
+`rulefit(X, y)` implements Friedman & Popescu (2008). A shrunken, subsampled
+boosted ensemble of shallow trees generates candidate rules (every non-root
+node's path, e.g. `x0 > 0.49 and x3 <= 0.7`). Winsorised, `0.4/std`-scaled
+linear terms are added, and a lasso (`alpha` given or chosen by K-fold CV,
+numpy coordinate descent) keeps a sparse set of terms. Rule importance is
+`|a_k| sqrt(s_k (1 - s_k))` and linear importance is `|b_j| std(l_j)`. Feature
+importance adds the linear part to each rule's importance split across the
+features it uses. Pass `model.predict(X)` as `y` to use it as a global surrogate.
+
+```python
+from interpretability import rulefit
+
+res = rulefit(X_train, model.predict(X_train), n_trees=30, max_depth=3, seed=0)
+print(res["r2"], res["alpha"], res["n_terms"])
+for rule in res["rules"][:5]:
+    print(round(rule["coef"], 3), round(rule["support"], 2), rule["text"])
+res["feature_importance"], res["linear"]
+y_hat = res["predict"](X_test)
 ```
 
 ## Attribution quality metrics (deletion/insertion, infidelity, sensitivity)
